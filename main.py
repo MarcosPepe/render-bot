@@ -13,12 +13,12 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 # ============================================
-# CONFIGURAÇÕES (variáveis de ambiente no Render)
+# CONFIGURAÇÕES (variáveis de ambiente)
 # ============================================
 
-TELEGRAM_TOKEN = "8900989769:AAH09QJFHB6fIoLs3I05Y7qfZ_RRIrt5bMU"
-CHAT_ID = "-1004496365867"
-FIREBASE_CRED = "firebase-creds.json"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+FIREBASE_CRED_JSON = os.environ.get("FIREBASE_CRED_JSON")
 FIREBASE_URL = "https://qualidade-do-ar-tcc-default-rtdb.firebaseio.com/"
 
 # ============================================
@@ -26,7 +26,8 @@ FIREBASE_URL = "https://qualidade-do-ar-tcc-default-rtdb.firebaseio.com/"
 # ============================================
 
 try:
-    cred = credentials.Certificate(FIREBASE_CRED)
+    cred_dict = json.loads(FIREBASE_CRED_JSON)
+    cred = credentials.Certificate(cred_dict)
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
     print("✅ Firebase conectado!")
 except Exception as e:
@@ -62,10 +63,6 @@ def classificar_ar(pm25):
     elif pm25 <= 100: return "🔴 MUITO RUIM"
     else: return "⚫ PÉSSIMA"
 
-# ============================================
-# FUNÇÃO: GERAR RELATÓRIO
-# ============================================
-
 def gerar_relatorio(dados):
     if not dados:
         return "⚠️ Dados indisponíveis."
@@ -93,10 +90,6 @@ def gerar_relatorio(dados):
 🧪 VOC: {voc}
 ━━━━━━━━━━━━━━━━━━━━━━
 📊 Classificação: {classificacao}"""
-
-# ============================================
-# FUNÇÃO: GERAR PREVISÃO
-# ============================================
 
 def gerar_previsao(dados):
     if not dados:
@@ -136,10 +129,6 @@ def gerar_previsao(dados):
         mensagem += "\n💨 Umidade confortável."
     
     return mensagem
-
-# ============================================
-# FUNÇÃO: GERAR ALERTAS
-# ============================================
 
 def gerar_alertas():
     try:
@@ -190,13 +179,7 @@ def gerar_alertas():
     except Exception as e:
         return f"❌ Erro: {e}"
 
-# ============================================
-# FUNÇÃO: ENVIAR GRÁFICO PARA O TELEGRAM
-# ============================================
-
 def enviar_grafico_telegram():
-    """Busca o gráfico do Firebase e envia para o Telegram"""
-    
     print("📊 Buscando gráfico no Firebase...")
     imagem_bytes = ler_grafico_firebase()
     
@@ -223,7 +206,7 @@ def enviar_grafico_telegram():
         return False
 
 # ============================================
-# COMANDOS DO TELEGRAM (BOTÕES)
+# COMANDOS DO TELEGRAM
 # ============================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,7 +283,6 @@ async def webhook(request):
 
 @app.route("/enviar_grafico")
 async def enviar_grafico_endpoint(request):
-    """Endpoint manual para enviar o gráfico"""
     sucesso = enviar_grafico_telegram()
     return JSONResponse({"status": "success" if sucesso else "error"})
 
@@ -319,6 +301,7 @@ def main():
     print("   📈 Gráfico Diário")
     print("━━━━━━━━━━━━━━━━━━━━━━")
     
+    # Inicializa a aplicação do bot
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_application.add_handler(CommandHandler("start", start))
     bot_application.add_handler(CallbackQueryHandler(button_callback))
