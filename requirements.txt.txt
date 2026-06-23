@@ -1,0 +1,6 @@
+python-telegram-bot==20.7
+firebase-admin==6.4.0
+requests==2.31.0
+python-dotenv==1.0.0
+uvicorn==0.24.0
+starlette==0.31.1
