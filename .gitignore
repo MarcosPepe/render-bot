@@ -1,0 +1,12 @@
+# Credenciais
+firebase-creds.json
+*.json
+
+# Arquivos do Python
+__pycache__/
+*.pyc
+.env
+
+# IDE
+.vscode/
+.idea/
