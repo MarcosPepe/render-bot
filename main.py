@@ -258,7 +258,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============================================
-# WEBHOOK (Starlette)
+# WEBHOOK (Starlette) - CORRIGIDO
 # ============================================
 
 app = Starlette()
@@ -272,14 +272,24 @@ async def home(request):
 async def health(request):
     return JSONResponse({"status": "OK"})
 
-@app.route("/webhook")
+@app.route("/webhook", methods=["POST"])
 async def webhook(request):
-    if request.method == "POST":
+    try:
+        # Pega o corpo da requisição
         body = await request.json()
+        
+        # Cria o objeto Update
         update = Update.de_json(body, bot_application.bot)
+        
+        # Processa a atualização
         await bot_application.process_update(update)
+        
+        # Retorna 200 OK para o Telegram
         return JSONResponse({"status": "ok"})
-    return JSONResponse({"status": "method not allowed"}, status_code=405)
+        
+    except Exception as e:
+        print(f"❌ Erro no webhook: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 @app.route("/enviar_grafico")
 async def enviar_grafico_endpoint(request):
