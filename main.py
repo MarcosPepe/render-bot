@@ -280,6 +280,11 @@ async def webhook(request):
         body = await request.json()
         print(f"📨 Webhook recebido: {body}")
         
+        # 🔧 CORREÇÃO: Inicializa a aplicação se necessário
+        if not bot_application.initialized:
+            await bot_application.initialize()
+            print("✅ Aplicação inicializada!")
+        
         # Cria o objeto Update
         update = Update.de_json(body, bot_application.bot)
         
