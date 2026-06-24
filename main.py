@@ -178,10 +178,6 @@ def gerar_alertas():
     except Exception as e:
         return f"❌ Erro: {e}"
 
-# ============================================
-# FUNÇÃO: ENVIAR GRÁFICO PARA O PRIVADO
-# ============================================
-
 def enviar_grafico_telegram_privado(chat_id):
     """Envia o gráfico para o chat privado do usuário"""
     print(f"📊 Buscando gráfico no Firebase para {chat_id}...")
@@ -210,10 +206,24 @@ def enviar_grafico_telegram_privado(chat_id):
         return False
 
 # ============================================
-# COMANDOS DO TELEGRAM
+# COMANDOS DO TELEGRAM - VERSÃO 2
 # ============================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /start - Versão 2: botões apenas no grupo"""
+    
+    chat = update.effective_chat
+    
+    # 🔧 Se for PRIVADO, apenas confirma e não envia botões
+    if chat.type == "private":
+        await update.message.reply_text(
+            "✅ Comando recebido!\n"
+            "📌 Os botões estão disponíveis no grupo.\n"
+            "   Clique em um botão lá para receber as informações aqui."
+        )
+        return
+    
+    # 🔧 Se for GRUPO, envia e fixa a mensagem
     keyboard = [
         [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
         [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
@@ -222,40 +232,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # 🔧 Envia a mensagem no chat onde o comando foi digitado
-    chat_id = update.effective_chat.id
-    
-    mensagem = await context.bot.send_message(
-        chat_id=chat_id,
-        text="🔹 SISTEMA DE QUALIDADE DO AR\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Clique nos botões abaixo para receber as informações no seu privado:",
+    mensagem = await update.message.reply_text(
+        "🔹 SISTEMA DE QUALIDADE DO AR\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Clique nos botões abaixo para receber as informações no seu privado:",
         reply_markup=reply_markup
     )
     
-    # 🔧 FIXA A MENSAGEM NO TOPO DO GRUPO
-    chat = update.effective_chat
-    if chat.type in ["group", "supergroup"]:
-        try:
-            await chat.pin_message(mensagem.message_id)
-            print("📌 Mensagem fixada no grupo!")
-        except Exception as e:
-            print(f"⚠️ Não foi possível fixar a mensagem: {e}")
-    
-    # Se o comando foi enviado no privado, avisa
-    if chat.type == "private":
-        await update.message.reply_text(
-            "✅ Os botões foram ativados no grupo!\n"
-            "📌 A mensagem foi fixada no topo do grupo para todos verem."
-        )
+    # Fixa a mensagem no topo do grupo
+    try:
+        await chat.pin_message(mensagem.message_id)
+        print("📌 Mensagem fixada no grupo!")
+    except Exception as e:
+        print(f"⚠️ Não foi possível fixar a mensagem: {e}")
+        print("   → O bot precisa ser administrador do grupo para fixar mensagens.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("✅ Processando...")
     
+    # Pega o ID e nome do usuário que clicou
     user_id = query.from_user.id
     user_name = query.from_user.first_name or "Usuário"
     
     dados = ler_dados_firebase()
     
+    # Gera a mensagem baseado no botão clicado
     if query.data == "relatorio":
         mensagem = gerar_relatorio(dados)
     elif query.data == "previsao":
@@ -278,7 +278,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Use /start no grupo para ver os botões novamente."
         )
         
-        # 🔧 Confirma no grupo sem editar a mensagem original
+        # Confirma no grupo sem editar a mensagem original
         await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
@@ -288,7 +288,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         print(f"❌ Erro ao enviar mensagem privada: {e}")
-        # Fallback: envia no grupo
+        # Fallback: se não conseguir enviar no privado, envia no grupo
         keyboard = [
             [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
             [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
@@ -322,21 +322,16 @@ async def webhook(request):
     global app_initialized
     
     try:
-        # Pega o corpo da requisição
         body = await request.json()
         print(f"📨 Webhook recebido: {body}")
         
-        # 🔧 Inicializa a aplicação se necessário
         if not app_initialized and bot_application:
             await bot_application.initialize()
             app_initialized = True
             print("✅ Aplicação inicializada!")
         
         if bot_application:
-            # Cria o objeto Update
             update = Update.de_json(body, bot_application.bot)
-            
-            # Processa a atualização
             await bot_application.process_update(update)
         
         return JSONResponse({"status": "ok"})
@@ -364,15 +359,17 @@ def main():
     print("   ⚠️ Alertas Meteorológicos")
     print("   📈 Gráfico Diário")
     print("━━━━━━━━━━━━━━━━━━━━━━")
+    print("📌 Versão 2: Botões apenas no grupo")
+    print("   /start no privado → apenas confirmação")
+    print("   /start no grupo → envia e fixa botões")
+    print("━━━━━━━━━━━━━━━━━━━━━━")
     
-    # Inicializa a aplicação do bot
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_application.add_handler(CommandHandler("start", start))
     bot_application.add_handler(CallbackQueryHandler(button_callback))
     
     app_initialized = False
     
-    # Inicia o servidor
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
