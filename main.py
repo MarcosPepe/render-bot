@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import base64
 import requests
@@ -13,6 +14,27 @@ from starlette.responses import JSONResponse
 import asyncio
 
 # ============================================
+# AJUSTE DE FUSO HORÁRIO (Brasília UTC-3)
+# ============================================
+
+os.environ['TZ'] = 'America/Sao_Paulo'
+try:
+    time.tzset()
+except AttributeError:
+    pass  # Fallback para sistemas que não suportam tzset
+
+# Função para obter horário de Brasília
+def hora_brasilia():
+    agora_utc = datetime.utcnow()
+    return agora_utc - timedelta(hours=3)
+
+def agora_str():
+    return hora_brasilia().strftime("%H:%M")
+
+def hoje_str():
+    return hora_brasilia().strftime("%d/%m/%Y")
+
+# ============================================
 # CONFIGURAÇÕES
 # ============================================
 
@@ -21,7 +43,7 @@ CHAT_ID = os.environ.get("CHAT_ID")
 FIREBASE_CRED_JSON = os.environ.get("FIREBASE_CRED_JSON")
 FIREBASE_URL = "https://qualidade-do-ar-tcc-default-rtdb.firebaseio.com/"
 
-# Horários dos relatórios
+# Horários dos relatórios (em horário de Brasília)
 HORARIOS_REPORT = ["07:00", "12:00", "15:00", "19:00"]
 HORA_GRAFICO = "20:00"
 
@@ -34,6 +56,7 @@ try:
     cred = credentials.Certificate(cred_dict)
     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_URL})
     print("✅ Firebase conectado!")
+    print(f"🕐 Horário de Brasília: {agora_str()}")
 except Exception as e:
     print(f"❌ Erro no Firebase: {e}")
 
@@ -112,8 +135,8 @@ def gerar_relatorio_tempo_real(dados):
     
     classificacao = classificar_ar(pm25)
     emoji = get_emoji_classificacao(pm25)
-    hora = datetime.now().strftime("%H:%M")
-    data = datetime.now().strftime("%d/%m/%Y")
+    hora = agora_str()
+    data = hoje_str()
     
     # Busca tendência
     try:
@@ -124,9 +147,9 @@ def gerar_relatorio_tempo_real(dados):
             if len(timestamps) >= 2:
                 ultimo = historico[timestamps[-1]]
                 pm25_anterior = ultimo.get('pm25', pm25)
-                if pm25 > pm25_anterior:
+                if pm25 > pm25_anterior + 0.1:
                     tendencia = "📈 Subindo"
-                elif pm25 < pm25_anterior:
+                elif pm25 < pm25_anterior - 0.1:
                     tendencia = "📉 Descendo"
                 else:
                     tendencia = "➡️ Estável"
@@ -192,7 +215,7 @@ def gerar_grafico_diario(dados):
         ax1.axhline(y=25, color='orange', linestyle=':', alpha=0.7, label='Limite (25)')
         ax1.set_xlabel('Medições (últimas 24h)', fontsize=10)
         ax1.set_ylabel('PM2.5 (µg/m³)', fontsize=10)
-        ax1.set_title(f'PM2.5 - Média: {media_pm25:.1f} | Max: {max_pm25:.1f} ({max_pm25_hora})', fontsize=11)
+        ax1.set_title(f'PM2.5 - Média: {media_pm25:.1f} | Máx: {max_pm25:.1f} ({max_pm25_hora})', fontsize=11)
         ax1.legend(fontsize=8, loc='upper right')
         ax1.grid(True, alpha=0.3)
         ax1.set_xticks(indices[::max(1, len(indices)//10)])
@@ -238,7 +261,7 @@ def gerar_grafico_diario(dados):
         ax4.set_xticklabels(horas[::max(1, len(indices)//10)], rotation=45, ha='right', fontsize=7)
         
         # Título geral
-        data_str = datetime.now().strftime('%d/%m/%Y')
+        data_str = hoje_str()
         fig.suptitle(f'Qualidade do Ar - {data_str} | Classificação: {classificacao}', fontsize=14, fontweight='bold')
         
         plt.tight_layout()
@@ -251,7 +274,7 @@ def gerar_grafico_diario(dados):
         
         # Gera relatório em texto
         relatorio = f"""📈 RELATÓRIO DIÁRIO COMPLETO
-🕐 {datetime.now().strftime('%H:%M')} - {data_str}
+🕐 {agora_str()} - {data_str}
 ━━━━━━━━━━━━━━━━━━━━━━
 📊 Estatísticas do dia:
    Média PM2.5: {media_pm25:.1f} µg/m³
@@ -281,15 +304,14 @@ def gerar_grafico_diario(dados):
 def salvar_grafico_firebase(imagem_buffer, relatorio):
     """Salva o gráfico no Firebase para o botão 'Gráfico Diário'"""
     try:
-        import base64
         imagem_buffer.seek(0)
         imagem_base64 = base64.b64encode(imagem_buffer.getvalue()).decode('utf-8')
         
         ref = db.reference('/grafico_diario')
         ref.set({
             'imagem': imagem_base64,
-            'data': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'timestamp': int(datetime.now().timestamp())
+            'data': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+            'timestamp': int(datetime.utcnow().timestamp())
         })
         print("✅ Gráfico salvo no Firebase!")
         return True
@@ -311,10 +333,10 @@ async def enviar_relatorio_tempo_real():
             text=mensagem,
             parse_mode="HTML"
         )
-        print(f"✅ Relatório enviado às {datetime.now().strftime('%H:%M')}")
+        print(f"✅ Relatório enviado às {agora_str()} (Brasília)")
         return True
     else:
-        print(f"❌ Falha ao enviar relatório às {datetime.now().strftime('%H:%M')}")
+        print(f"❌ Falha ao enviar relatório às {agora_str()}")
         return False
 
 # ============================================
@@ -323,7 +345,7 @@ async def enviar_relatorio_tempo_real():
 
 async def enviar_relatorio_diario():
     """Gera gráfico, salva no Firebase e envia relatório no grupo"""
-    print(f"📊 Gerando relatório diário às {datetime.now().strftime('%H:%M')}...")
+    print(f"📊 Gerando relatório diário às {agora_str()}...")
     
     dados = buscar_historico_dia()
     if not dados:
@@ -361,7 +383,7 @@ async def enviar_relatorio_diario():
         caption="📊 Evolução completa do dia (PM2.5, PM10, Temperatura, Umidade)"
     )
     
-    print(f"✅ Relatório diário enviado às {datetime.now().strftime('%H:%M')}")
+    print(f"✅ Relatório diário enviado às {agora_str()}")
     return True
 
 # ============================================
@@ -369,27 +391,29 @@ async def enviar_relatorio_diario():
 # ============================================
 
 async def verificar_horarios():
-    """Verifica se é hora de enviar os relatórios"""
-    hora_atual = datetime.now().strftime("%H:%M")
+    """Verifica se é hora de enviar os relatórios (horário de Brasília)"""
+    hora_atual = agora_str()
     
     # Usa um dicionário para controlar o último envio
     if not hasattr(verificar_horarios, "ultimo_envio"):
         verificar_horarios.ultimo_envio = {}
     
+    data_hoje = hoje_str()
+    
     # Relatórios em tempo real (07h, 12h, 15h, 19h)
     for horario in HORARIOS_REPORT:
-        if hora_atual == horario and verificar_horarios.ultimo_envio.get(horario) != datetime.now().date():
-            print(f"⏰ Hora de enviar relatório: {horario}")
+        if hora_atual == horario and verificar_horarios.ultimo_envio.get(horario) != data_hoje:
+            print(f"⏰ Hora de enviar relatório: {horario} (Brasília)")
             await enviar_relatorio_tempo_real()
-            verificar_horarios.ultimo_envio[horario] = datetime.now().date()
-            await asyncio.sleep(30)  # Espera 30 segundos para não enviar múltiplas vezes
+            verificar_horarios.ultimo_envio[horario] = data_hoje
+            await asyncio.sleep(30)
             return True
     
     # Relatório diário com gráfico (20h)
-    if hora_atual == HORA_GRAFICO and verificar_horarios.ultimo_envio.get("diario") != datetime.now().date():
-        print(f"⏰ Hora de enviar relatório diário com gráfico!")
+    if hora_atual == HORA_GRAFICO and verificar_horarios.ultimo_envio.get("diario") != data_hoje:
+        print(f"⏰ Hora de enviar relatório diário com gráfico! (Brasília)")
         await enviar_relatorio_diario()
-        verificar_horarios.ultimo_envio["diario"] = datetime.now().date()
+        verificar_horarios.ultimo_envio["diario"] = data_hoje
         await asyncio.sleep(30)
         return True
     
@@ -474,9 +498,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "relatorio":
         mensagem = gerar_relatorio_tempo_real(dados)
     elif query.data == "previsao":
-        mensagem = gerar_previsao(dados)  # Você já tem esta função
+        mensagem = gerar_previsao(dados)
     elif query.data == "alertas":
-        mensagem = gerar_alertas()  # Você já tem esta função
+        mensagem = gerar_alertas()
     elif query.data == "grafico":
         sucesso = enviar_grafico_telegram_privado(user_id)
         if sucesso:
@@ -646,11 +670,12 @@ async def webhook(request):
 # ============================================
 
 async def main_loop():
-    """Loop que verifica os horários programados"""
+    """Loop que verifica os horários programados (horário de Brasília)"""
+    print(f"🕐 Loop iniciado. Horário de Brasília: {agora_str()}")
     while True:
         try:
             await verificar_horarios()
-            await asyncio.sleep(60)  # Verifica a cada 1 minuto
+            await asyncio.sleep(30)  # Verifica a cada 30 segundos
         except Exception as e:
             print(f"❌ Erro no loop: {e}")
             await asyncio.sleep(60)
@@ -663,13 +688,14 @@ def main():
     global bot_application, app_initialized
     
     print("🚀 Bot do Telegram (Render) iniciado!")
+    print(f"🕐 Horário de Brasília: {agora_str()}")
     print("📊 4 botões disponíveis:")
     print("   📊 Relatório do Ar")
     print("   🌤️ Previsão do Tempo")
     print("   ⚠️ Alertas Meteorológicos")
     print("   📈 Gráfico Diário")
     print("━━━━━━━━━━━━━━━━━━━━━━")
-    print("⏰ Relatórios programados:")
+    print("⏰ Relatórios programados (horário de Brasília):")
     print("   07h, 12h, 15h, 19h - Dados em tempo real")
     print("   20h - Relatório diário com gráfico")
     print("━━━━━━━━━━━━━━━━━━━━━━")
@@ -683,11 +709,9 @@ def main():
     # Inicia o servidor
     port = int(os.environ.get("PORT", 8000))
     
-    # Configura e inicia o loop de relatórios
+    # Inicia o loop de relatórios em background
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
-    # Inicia o loop de relatórios em background
     loop.create_task(main_loop())
     
     # Inicia o servidor
