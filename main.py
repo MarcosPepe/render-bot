@@ -10,8 +10,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Route
-from starlette.requests import Request
 
 # ============================================
 # CONFIGURAÇÕES (variáveis de ambiente)
@@ -259,11 +257,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============================================
-# WEBHOOK (CORRIGIDO)
+# WEBHOOK (VERSÃO DEFINITIVA)
 # ============================================
 
 app = Starlette()
 bot_application = None
+app_initialized = False
 
 @app.route("/")
 async def home(request):
@@ -275,14 +274,17 @@ async def health(request):
 
 @app.route("/webhook", methods=["POST"])
 async def webhook(request):
+    global app_initialized
+    
     try:
         # Pega o corpo da requisição
         body = await request.json()
         print(f"📨 Webhook recebido: {body}")
         
         # 🔧 CORREÇÃO: Inicializa a aplicação se necessário
-        if not bot_application.initialized:
+        if not app_initialized:
             await bot_application.initialize()
+            app_initialized = True
             print("✅ Aplicação inicializada!")
         
         # Cria o objeto Update
@@ -308,7 +310,7 @@ async def enviar_grafico_endpoint(request):
 # ============================================
 
 def main():
-    global bot_application
+    global bot_application, app_initialized
     
     print("🚀 Bot do Telegram (Render) iniciado!")
     print("📊 4 botões disponíveis:")
@@ -325,8 +327,12 @@ def main():
     
     # Configura o webhook
     webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
-    bot_application.bot.set_webhook(url=webhook_url)
+    # Na versão 21.x, set_webhook é async, mas podemos usar de forma síncrona com run
+    import asyncio
+    asyncio.run(bot_application.bot.set_webhook(url=webhook_url))
     print(f"✅ Webhook configurado: {webhook_url}")
+    
+    app_initialized = False
     
     # Inicia o servidor
     port = int(os.environ.get("PORT", 8000))
