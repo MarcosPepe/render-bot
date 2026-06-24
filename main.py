@@ -21,9 +21,9 @@ os.environ['TZ'] = 'America/Sao_Paulo'
 try:
     time.tzset()
 except AttributeError:
-    pass  # Fallback para sistemas que não suportam tzset
+    pass
 
-# Função para obter horário de Brasília
+# Funções de horário
 def hora_brasilia():
     agora_utc = datetime.utcnow()
     return agora_utc - timedelta(hours=3)
@@ -34,6 +34,9 @@ def agora_str():
 def hoje_str():
     return hora_brasilia().strftime("%d/%m/%Y")
 
+def data_iso():
+    return hora_brasilia().strftime("%Y-%m-%d")
+
 # ============================================
 # CONFIGURAÇÕES
 # ============================================
@@ -43,7 +46,11 @@ CHAT_ID = os.environ.get("CHAT_ID")
 FIREBASE_CRED_JSON = os.environ.get("FIREBASE_CRED_JSON")
 FIREBASE_URL = "https://qualidade-do-ar-tcc-default-rtdb.firebaseio.com/"
 
-# Horários dos relatórios (em horário de Brasília)
+# Coordenadas da sua cidade (substitua pelas suas)
+LATITUDE = -22.0739   # ← Substitua pela sua latitude
+LONGITUDE = -48.7403  # ← Substitua pela sua longitude
+
+# Horários dos relatórios
 HORARIOS_REPORT = ["07:00", "12:00", "15:00", "19:00"]
 HORA_GRAFICO = "20:00"
 
@@ -73,18 +80,14 @@ def ler_dados_firebase():
         return None
 
 def buscar_historico_dia():
-    """Busca os últimos registros do histórico para o gráfico"""
     try:
         ref = db.reference('/historico')
         historico = ref.get()
-        
         if not historico:
             return None
-        
         timestamps = sorted(historico.keys())
         num_registros = min(100, len(timestamps))
         ultimos_timestamps = timestamps[-num_registros:]
-        
         dados_filtrados = []
         for key in ultimos_timestamps:
             value = historico[key]
@@ -97,9 +100,7 @@ def buscar_historico_dia():
                 'pm10': value.get('pm10', 0),
                 'voc': value.get('voc', 0)
             })
-        
         return dados_filtrados
-        
     except Exception as e:
         print(f"❌ Erro ao buscar histórico: {e}")
         return None
@@ -117,6 +118,348 @@ def get_emoji_classificacao(pm25):
     elif pm25 <= 50: return "🟠"
     elif pm25 <= 100: return "🔴"
     else: return "⚫"
+
+# ============================================
+# FUNÇÃO: PREVISÃO DO TEMPO VIA OPEN-METEO
+# ============================================
+
+def obter_previsao_tempo():
+    """
+    Busca previsão do tempo para sua localização via Open-Meteo API
+    Retorna um dicionário com os dados de previsão
+    """
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=2"
+        
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            print(f"❌ Erro na Open-Meteo: {response.status_code}")
+            return None
+        
+        dados = response.json()
+        
+        # Pega dados atuais
+        current = dados.get('current', {})
+        daily = dados.get('daily', {})
+        
+        # Código de clima (weather_code)
+        # 0 = Céu limpo, 1 = Principalmente limpo, 2 = Parcialmente nublado, 3 = Nublado
+        # 45 = Neblina, 51 = Garoa leve, 61 = Chuva leve, 80 = Pancadas de chuva
+        weather_codes = {
+            0: "☀️ Céu limpo",
+            1: "🌤️ Principalmente limpo",
+            2: "⛅ Parcialmente nublado",
+            3: "☁️ Nublado",
+            45: "🌫️ Neblina",
+            48: "🌫️ Neblina com geada",
+            51: "🌧️ Garoa leve",
+            53: "🌧️ Garoa moderada",
+            55: "🌧️ Garoa densa",
+            61: "🌧️ Chuva leve",
+            63: "🌧️ Chuva moderada",
+            65: "🌧️ Chuva forte",
+            71: "❄️ Neve leve",
+            73: "❄️ Neve moderada",
+            75: "❄️ Neve forte",
+            80: "⛈️ Pancadas de chuva",
+            81: "⛈️ Pancadas moderadas",
+            82: "⛈️ Pancadas fortes",
+            95: "⛈️ Trovoada",
+            96: "⛈️ Trovoada com granizo",
+            99: "⛈️ Trovoada com granizo forte"
+        }
+        
+        weather_code = current.get('weather_code', 0)
+        current_weather = weather_codes.get(weather_code, "❓ Desconhecido")
+        
+        # Previsão para hoje e amanhã
+        hoje = data_iso()
+        previsao_hoje = {}
+        previsao_amanha = {}
+        
+        if 'time' in daily and len(daily['time']) >= 2:
+            for i, data in enumerate(daily['time']):
+                if data == hoje:
+                    previsao_hoje = {
+                        'temp_max': daily['temperature_2m_max'][i],
+                        'temp_min': daily['temperature_2m_min'][i],
+                        'precipitacao': daily['precipitation_sum'][i],
+                        'weather_code': daily['weather_code'][i],
+                        'nascer_sol': daily['sunrise'][i].split('T')[1] if 'sunrise' in daily else '',
+                        'por_sol': daily['sunset'][i].split('T')[1] if 'sunset' in daily else ''
+                    }
+                elif i == 1:
+                    previsao_amanha = {
+                        'temp_max': daily['temperature_2m_max'][i],
+                        'temp_min': daily['temperature_2m_min'][i],
+                        'precipitacao': daily['precipitation_sum'][i],
+                        'weather_code': daily['weather_code'][i]
+                    }
+        
+        return {
+            'atual': {
+                'temp': current.get('temperature_2m', 0),
+                'umid': current.get('relative_humidity_2m', 0),
+                'sensacao': current.get('apparent_temperature', 0),
+                'precipitacao': current.get('precipitation', 0),
+                'clima': current_weather,
+                'weather_code': weather_code
+            },
+            'hoje': previsao_hoje,
+            'amanha': previsao_amanha
+        }
+        
+    except Exception as e:
+        print(f"❌ Erro na Open-Meteo: {e}")
+        return None
+
+# ============================================
+# FUNÇÃO: ANALISAR PREVISÃO DO TEMPO
+# ============================================
+
+def analisar_previsao(dados_sensor, previsao):
+    """Analisa os dados do sensor com a previsão da Open-Meteo"""
+    if not previsao:
+        return "⚠️ Dados de previsão indisponíveis no momento."
+    
+    temp_sensor = dados_sensor.get('temperatura', 0) if dados_sensor else 0
+    umid_sensor = dados_sensor.get('umidade', 0) if dados_sensor else 0
+    
+    previsao_atual = previsao.get('atual', {})
+    previsao_hoje = previsao.get('hoje', {})
+    previsao_amanha = previsao.get('amanha', {})
+    
+    temp_api = previsao_atual.get('temp', 0)
+    clima_api = previsao_atual.get('clima', 'Desconhecido')
+    temp_max_hoje = previsao_hoje.get('temp_max', 0)
+    temp_min_hoje = previsao_hoje.get('temp_min', 0)
+    precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
+    
+    # ============================================
+    # ANÁLISE DA TEMPERATURA
+    # ============================================
+    
+    analise_temp = ""
+    if temp_sensor > 0:
+        if abs(temp_sensor - temp_api) > 3:
+            analise_temp = f"⚠️ Seu sensor ({temp_sensor:.1f}°C) está {temp_sensor - temp_api:.1f}°C diferente da previsão ({temp_api:.1f}°C)."
+        else:
+            analise_temp = f"✅ Sensor ({temp_sensor:.1f}°C) alinhado com a previsão ({temp_api:.1f}°C)."
+    
+    # ============================================
+    # ANÁLISE DE TENDÊNCIA
+    # ============================================
+    
+    tendencia = ""
+    if temp_max_hoje > 0 and temp_sensor > 0:
+        if temp_max_hoje > temp_sensor + 5:
+            tendencia = "🌡️ Tendência de AQUECIMENTO nas próximas horas."
+        elif temp_min_hoje < temp_sensor - 5:
+            tendencia = "🌡️ Tendência de RESFRIAMENTO nas próximas horas."
+        elif temp_max_hoje <= temp_sensor + 2:
+            tendencia = "🌡️ Temperatura estável, sem grandes mudanças previstas."
+    
+    # ============================================
+    # ANÁLISE DE CHUVA
+    # ============================================
+    
+    chuva = ""
+    if precipitacao_hoje > 5:
+        chuva = "🌧️ Previsão de CHUVA para hoje. Recomenda-se precaução."
+    elif precipitacao_hoje > 1:
+        chuva = "🌦️ Possibilidade de CHUVA FRACA hoje."
+    else:
+        chuva = "☀️ Sem previsão de chuva para hoje."
+    
+    # ============================================
+    # ANÁLISE DE UMIDADE
+    # ============================================
+    
+    umid_analise = ""
+    if umid_sensor > 0:
+        if umid_sensor > 80:
+            umid_analise = "💧 Umidade alta (>80%). Ambiente úmido."
+        elif umid_sensor < 40:
+            umid_analise = "💨 Umidade baixa (<40%). Ambiente seco."
+        else:
+            umid_analise = "💧 Umidade confortável."
+    
+    # ============================================
+    # MONTAGEM DA MENSAGEM
+    # ============================================
+    
+    mensagem = f"""🌤️ PREVISÃO DO TEMPO COMPLETA
+━━━━━━━━━━━━━━━━━━━━━━
+📊 Dados do sensor:
+   🌡️ Temperatura: {temp_sensor:.1f}°C
+   💧 Umidade: {umid_sensor:.0f}%
+━━━━━━━━━━━━━━━━━━━━━━
+📡 Previsão Open-Meteo:
+   🌡️ Temperatura atual: {temp_api:.1f}°C
+   🌡️ Sensação térmica: {previsao_atual.get('sensacao', 0):.1f}°C
+   ☁️ Clima: {clima_api}
+   💧 Umidade: {previsao_atual.get('umid', 0):.0f}%
+   🌧️ Precipitação: {previsao_atual.get('precipitacao', 0):.1f} mm
+━━━━━━━━━━━━━━━━━━━━━━
+📅 Previsão para hoje:
+   🌡️ Máxima: {temp_max_hoje:.1f}°C
+   🌡️ Mínima: {temp_min_hoje:.1f}°C
+   🌧️ Chuva: {precipitacao_hoje:.1f} mm
+━━━━━━━━━━━━━━━━━━━━━━
+🔮 Análise:
+{analise_temp}
+{tendencia}
+{chuva}
+{umid_analise}
+━━━━━━━━━━━━━━━━━━━━━━
+📌 Atualizado: {agora_str()} - {hoje_str()}"""
+
+    return mensagem
+
+# ============================================
+# FUNÇÃO: GERAR ALERTAS METEOROLÓGICOS (COM ANÁLISE)
+# ============================================
+
+def gerar_alertas_meteorologicos():
+    """Gera alertas combinando dados do sensor com previsão Open-Meteo"""
+    try:
+        # 1. Busca dados do sensor
+        dados_sensor = ler_dados_firebase()
+        if not dados_sensor:
+            return "⚠️ Dados do sensor indisponíveis."
+        
+        # 2. Busca previsão Open-Meteo
+        previsao = obter_previsao_tempo()
+        if not previsao:
+            return "⚠️ Previsão do tempo indisponível no momento."
+        
+        # 3. Busca histórico para tendências
+        ref = db.reference('/historico')
+        historico = ref.get()
+        
+        temp_sensor = dados_sensor.get('temperatura', 0)
+        umid_sensor = dados_sensor.get('umidade', 0)
+        pressao_sensor = dados_sensor.get('pressao', 0)
+        
+        previsao_atual = previsao.get('atual', {})
+        previsao_hoje = previsao.get('hoje', {})
+        
+        temp_api = previsao_atual.get('temp', 0)
+        clima_api = previsao_atual.get('clima', 'Desconhecido')
+        temp_max_hoje = previsao_hoje.get('temp_max', 0)
+        precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
+        
+        alertas = "⚠️ ALERTAS METEOROLÓGICOS\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        tem_alerta = False
+        
+        # ============================================
+        # ALERTA 1: TEMPERATURA (Variação em 1h)
+        # ============================================
+        
+        if historico:
+            timestamps = sorted(historico.keys())
+            if len(timestamps) >= 6:
+                idx_antigo = len(timestamps) - 6
+                dados_antigo = historico[timestamps[idx_antigo]]
+                temp_antiga = dados_antigo.get('temperatura', temp_sensor)
+                var_temp = temp_sensor - temp_antiga
+                
+                if abs(var_temp) >= 2.0:
+                    tem_alerta = True
+                    alertas += f"🌡️ ALERTA DE TEMPERATURA!\n"
+                    if var_temp > 0:
+                        alertas += f"   🔥 Subida de {abs(var_temp):.1f}°C em 1h\n"
+                        # Verifica se a previsão confirma onda de calor
+                        if temp_max_hoje > 30 and temp_sensor > 25:
+                            alertas += f"   ☀️ PREVISÃO: Temp máxima de {temp_max_hoje:.1f}°C hoje\n"
+                            alertas += f"   ⚠️ Possível ONDA DE CALOR! Mantenha-se hidratado.\n"
+                        elif temp_max_hoje > temp_sensor + 5:
+                            alertas += f"   ⚠️ AQUECIMENTO RÁPIDO! {temp_sensor:.1f}°C → {temp_max_hoje:.1f}°C\n"
+                            alertas += f"   ⚠️ Possível ONDA DE CALOR nas próximas horas!\n"
+                        else:
+                            alertas += f"   ⚠️ Aquecimento significativo. Fique atento!\n"
+                    else:
+                        alertas += f"   ❄️ Queda de {abs(var_temp):.1f}°C em 1h\n"
+                        if temp_sensor < 18:
+                            alertas += f"   ❄️ Temperatura já está baixa ({temp_sensor:.1f}°C)\n"
+                            alertas += f"   ⚠️ Possível FRENTE FRIA! Agasalhe-se.\n"
+                        else:
+                            alertas += f"   ⚠️ Possível frente fria se aproximando!\n"
+                    alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # ============================================
+        # ALERTA 2: PRESSÃO (Variação em 1h)
+        # ============================================
+        
+        if historico:
+            timestamps = sorted(historico.keys())
+            if len(timestamps) >= 6:
+                idx_antigo = len(timestamps) - 6
+                dados_antigo = historico[timestamps[idx_antigo]]
+                press_antiga = dados_antigo.get('pressao', pressao_sensor)
+                var_press = pressao_sensor - press_antiga
+                
+                if abs(var_press) >= 5.0:
+                    tem_alerta = True
+                    alertas += f"📊 ALERTA DE PRESSÃO!\n"
+                    if var_press < 0:
+                        alertas += f"   ⬇️ Queda de {abs(var_press):.1f} hPa em 1h\n"
+                        if precipitacao_hoje > 5:
+                            alertas += f"   🌧️ Previsão de {precipitacao_hoje:.1f}mm de chuva\n"
+                            alertas += f"   ⚠️ Possibilidade de TEMPESTADE!\n"
+                        else:
+                            alertas += f"   ⚠️ Possível mudança climática!\n"
+                    else:
+                        alertas += f"   ⬆️ Subida de {var_press:.1f} hPa em 1h\n"
+                        alertas += f"   ☀️ Tendência de tempo estável e melhora!\n"
+                    alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # ============================================
+        # ALERTA 3: PRECIPITAÇÃO (Chuva prevista)
+        # ============================================
+        
+        if precipitacao_hoje > 10:
+            tem_alerta = True
+            alertas += f"🌧️ ALERTA DE CHUVA!\n"
+            alertas += f"   ☔ Previsão de {precipitacao_hoje:.1f}mm de chuva hoje\n"
+            if precipitacao_hoje > 20:
+                alertas += f"   ⚠️ CHUVA FORTE! Cuidado com enchentes.\n"
+            elif precipitacao_hoje > 10:
+                alertas += f"   ⚠️ Chuva moderada. Leve guarda-chuva.\n"
+            alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # ============================================
+        # ALERTA 4: CLIMA EXTREMO (Com base na previsão)
+        # ============================================
+        
+        weather_code = previsao_atual.get('weather_code', 0)
+        if weather_code in [95, 96, 99]:  # Trovoada
+            tem_alerta = True
+            alertas += f"⛈️ ALERTA DE TROVOADA!\n"
+            alertas += f"   ⚠️ Possibilidade de raios e ventos fortes!\n"
+            alertas += f"   🏠 Permaneça em local seguro.\n"
+            alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # ============================================
+        # SE NÃO HOUVER ALERTA
+        # ============================================
+        
+        if not tem_alerta:
+            alertas += "✅ TEMPO ESTÁVEL!\n"
+            alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+            alertas += f"🌡️ {temp_sensor:.1f}°C | 💧 {umid_sensor:.0f}%\n"
+            alertas += f"📊 {pressao_sensor:.0f} hPa\n"
+            alertas += f"☁️ {clima_api}\n"
+            alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+            alertas += "Nenhum alerta meteorológico previsto.\n"
+            alertas += "Condições climáticas estáveis.\n"
+            alertas += f"🌡️ Previsão para hoje: {temp_max_hoje:.1f}°C (máx)"
+        
+        return alertas
+        
+    except Exception as e:
+        print(f"❌ Erro ao gerar alertas: {e}")
+        return f"❌ Erro ao gerar alertas: {e}"
 
 # ============================================
 # FUNÇÃO: GERAR RELATÓRIO EM TEXTO
@@ -498,9 +841,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "relatorio":
         mensagem = gerar_relatorio_tempo_real(dados)
     elif query.data == "previsao":
-        mensagem = gerar_previsao(dados)
+        # Previsão com Open-Meteo
+        previsao = obter_previsao_tempo()
+        if previsao:
+            mensagem = analisar_previsao(dados, previsao)
+        else:
+            mensagem = "⚠️ Dados de previsão indisponíveis no momento. Tente novamente mais tarde."
     elif query.data == "alertas":
-        mensagem = gerar_alertas()
+        # Alertas meteorológicos com Open-Meteo
+        mensagem = gerar_alertas_meteorologicos()
     elif query.data == "grafico":
         sucesso = enviar_grafico_telegram_privado(user_id)
         if sucesso:
@@ -533,98 +882,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n🔘 Clique nos botões:",
             reply_markup=reply_markup
         )
-
-# ============================================
-# FUNÇÕES: PREVISÃO E ALERTAS
-# ============================================
-
-def gerar_previsao(dados):
-    if not dados:
-        return "⚠️ Dados indisponíveis."
-    
-    temp = dados.get('temperatura', 0)
-    umid = dados.get('umidade', 0)
-    pressao = dados.get('pressao', 0)
-    
-    mensagem = f"""🌤️ PREVISÃO DO TEMPO
-━━━━━━━━━━━━━━━━━━━━━━
-🌡️ Temperatura: {temp:.1f}°C
-💧 Umidade: {umid:.0f}%
-📊 Pressão: {pressao:.0f} hPa
-━━━━━━━━━━━━━━━━━━━━━━
-📊 Análise:"""
-
-    if temp > 30:
-        mensagem += "\n☀️ Dia quente! Mantenha-se hidratado."
-    elif temp < 18:
-        mensagem += "\n❄️ Dia frio! Vista-se bem."
-    else:
-        mensagem += "\n🌤️ Temperatura agradável."
-    
-    if pressao < 960:
-        mensagem += "\n🌧️ Pressão baixa - Possível chuva!"
-    elif pressao > 975:
-        mensagem += "\n☀️ Pressão alta - Tempo estável!"
-    else:
-        mensagem += "\n📊 Pressão normal."
-    
-    if umid > 70:
-        mensagem += "\n💧 Umidade alta - Ar úmido."
-    elif umid < 40:
-        mensagem += "\n💨 Umidade baixa - Ar seco."
-    else:
-        mensagem += "\n💨 Umidade confortável."
-    
-    return mensagem
-
-def gerar_alertas():
-    try:
-        ref = db.reference('/historico')
-        historico = ref.get()
-        
-        if not historico:
-            return "⚠️ Histórico indisponível."
-        
-        timestamps = sorted(historico.keys())
-        if len(timestamps) < 6:
-            return f"⏳ Coletando dados... ({len(timestamps)}/6)"
-        
-        dados_atual = ler_dados_firebase()
-        if not dados_atual:
-            return "⚠️ Dados atuais indisponíveis."
-        
-        idx_antigo = len(timestamps) - 6
-        dados_antigo = historico[timestamps[idx_antigo]]
-        
-        var_temp = dados_atual.get('temperatura', 0) - dados_antigo.get('temperatura', 0)
-        var_press = dados_atual.get('pressao', 0) - dados_antigo.get('pressao', 0)
-        var_umid = dados_atual.get('umidade', 0) - dados_antigo.get('umidade', 0)
-        
-        alertas = "⚠️ ALERTAS METEOROLÓGICOS\n━━━━━━━━━━━━━━━━━━━━━━\n"
-        tem_alerta = False
-        
-        if abs(var_temp) >= 2.0:
-            tem_alerta = True
-            alertas += f"🌡️ {'🔽 Queda' if var_temp < 0 else '🔥 Subida'} de {abs(var_temp):.1f}°C em 1h\n"
-        
-        if abs(var_press) >= 5.0:
-            tem_alerta = True
-            alertas += f"📊 {'⬇️ Queda' if var_press < 0 else '⬆️ Subida'} de {abs(var_press):.1f} hPa em 1h\n"
-        
-        if abs(var_umid) >= 15.0:
-            tem_alerta = True
-            alertas += f"💧 {'🔽 Queda' if var_umid < 0 else '🔼 Subida'} de {abs(var_umid):.1f}% em 1h\n"
-        
-        if not tem_alerta:
-            alertas += "✅ TEMPO ESTÁVEL!\n━━━━━━━━━━━━━━━━━━━━━━\n"
-            alertas += f"🌡️ {dados_atual.get('temperatura', 0):.1f}°C | 💧 {dados_atual.get('umidade', 0):.0f}%\n"
-            alertas += f"📊 {dados_atual.get('pressao', 0):.0f} hPa\n"
-            alertas += "Nenhum alerta meteorológico previsto."
-        
-        return alertas
-        
-    except Exception as e:
-        return f"❌ Erro: {e}"
 
 # ============================================
 # WEBHOOK
@@ -691,7 +948,7 @@ def main():
     print(f"🕐 Horário de Brasília: {agora_str()}")
     print("📊 4 botões disponíveis:")
     print("   📊 Relatório do Ar")
-    print("   🌤️ Previsão do Tempo")
+    print("   🌤️ Previsão do Tempo (com Open-Meteo)")
     print("   ⚠️ Alertas Meteorológicos")
     print("   📈 Gráfico Diário")
     print("━━━━━━━━━━━━━━━━━━━━━━")
@@ -699,6 +956,7 @@ def main():
     print("   07h, 12h, 15h, 19h - Dados em tempo real")
     print("   20h - Relatório diário com gráfico")
     print("━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"📍 Localização: {LATITUDE}, {LONGITUDE}")
     
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_application.add_handler(CommandHandler("start", start))
