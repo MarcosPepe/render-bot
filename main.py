@@ -178,8 +178,13 @@ def gerar_alertas():
     except Exception as e:
         return f"❌ Erro: {e}"
 
-def enviar_grafico_telegram():
-    print("📊 Buscando gráfico no Firebase...")
+# ============================================
+# FUNÇÃO: ENVIAR GRÁFICO PARA O PRIVADO
+# ============================================
+
+def enviar_grafico_telegram_privado(chat_id):
+    """Envia o gráfico para o chat privado do usuário"""
+    print(f"📊 Buscando gráfico no Firebase para {chat_id}...")
     imagem_bytes = ler_grafico_firebase()
     
     if not imagem_bytes:
@@ -190,12 +195,12 @@ def enviar_grafico_telegram():
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     files = {'photo': ('grafico.png', imagem_bytes, 'image/png')}
-    data = {'chat_id': CHAT_ID, 'caption': '📊 Relatório Diário - Qualidade do Ar'}
+    data = {'chat_id': chat_id, 'caption': '📊 Relatório Diário - Qualidade do Ar'}
     
     try:
         response = requests.post(url, files=files, data=data)
         if response.status_code == 200:
-            print("✅ Gráfico enviado com sucesso!")
+            print(f"✅ Gráfico enviado para {chat_id}!")
             return True
         else:
             print(f"❌ Erro: {response.status_code}")
@@ -217,17 +222,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(
-        "🔹 SISTEMA DE QUALIDADE DO AR\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Clique nos botões abaixo:",
+    # Envia a mensagem com os botões
+    mensagem = await update.message.reply_text(
+        "🔹 SISTEMA DE QUALIDADE DO AR\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Clique nos botões abaixo para receber as informações no seu privado:",
         reply_markup=reply_markup
     )
+    
+    # 🔧 FIXA A MENSAGEM NO TOPO DO GRUPO (se for grupo e o bot for admin)
+    chat = update.effective_chat
+    if chat.type in ["group", "supergroup"]:
+        try:
+            await chat.pin_message(mensagem.message_id)
+            print("📌 Mensagem fixada no grupo!")
+        except Exception as e:
+            print(f"⚠️ Não foi possível fixar a mensagem: {e}")
+            print("   → O bot precisa ser administrador do grupo para fixar mensagens.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("✅ Processando...")
     
+    # Pega o ID e nome do usuário que clicou
+    user_id = query.from_user.id
+    user_name = query.from_user.first_name or "Usuário"
+    
     dados = ler_dados_firebase()
     
+    # Gera a mensagem baseado no botão clicado
     if query.data == "relatorio":
         mensagem = gerar_relatorio(dados)
     elif query.data == "previsao":
@@ -235,29 +256,41 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "alertas":
         mensagem = gerar_alertas()
     elif query.data == "grafico":
-        sucesso = enviar_grafico_telegram()
+        sucesso = enviar_grafico_telegram_privado(user_id)
         if sucesso:
-            mensagem = "📊 Gráfico enviado acima!"
+            mensagem = "📊 Gráfico enviado no seu privado!"
         else:
             mensagem = "⚠️ Gráfico indisponível no momento. Aguarde o relatório das 20h."
     else:
         mensagem = "⚠️ Comando não reconhecido!"
     
-    keyboard = [
-        [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
-        [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
-        [InlineKeyboardButton("⚠️ Alertas Meteorológicos", callback_data="alertas")],
-        [InlineKeyboardButton("📈 Gráfico Diário", callback_data="grafico")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n🔘 Clique nos botões:",
-        reply_markup=reply_markup
-    )
+    # 🔧 ENVIA A RESPOSTA NO PRIVADO DO USUÁRIO
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Use /start no grupo para ver os botões novamente."
+        )
+        # Confirma no grupo que foi enviado no privado
+        await query.edit_message_text(
+            text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
+        )
+    except Exception as e:
+        print(f"❌ Erro ao enviar mensagem privada: {e}")
+        # Se não conseguir enviar no privado, envia no grupo mesmo
+        keyboard = [
+            [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
+            [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
+            [InlineKeyboardButton("⚠️ Alertas Meteorológicos", callback_data="alertas")],
+            [InlineKeyboardButton("📈 Gráfico Diário", callback_data="grafico")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n🔘 Clique nos botões:",
+            reply_markup=reply_markup
+        )
 
 # ============================================
-# WEBHOOK (VERSÃO DEFINITIVA)
+# WEBHOOK
 # ============================================
 
 app = Starlette()
@@ -281,7 +314,7 @@ async def webhook(request):
         body = await request.json()
         print(f"📨 Webhook recebido: {body}")
         
-        # 🔧 CORREÇÃO: Inicializa a aplicação se necessário
+        # 🔧 Inicializa a aplicação se necessário
         if not app_initialized and bot_application:
             await bot_application.initialize()
             app_initialized = True
@@ -302,7 +335,7 @@ async def webhook(request):
 
 @app.route("/enviar_grafico")
 async def enviar_grafico_endpoint(request):
-    sucesso = enviar_grafico_telegram()
+    sucesso = enviar_grafico_telegram_privado(CHAT_ID)
     return JSONResponse({"status": "success" if sucesso else "error"})
 
 # ============================================
@@ -327,7 +360,7 @@ def main():
     
     app_initialized = False
     
-    # Inicia o servidor (o webhook será configurado na primeira requisição)
+    # Inicia o servidor
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
