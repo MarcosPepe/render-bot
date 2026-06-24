@@ -264,19 +264,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         mensagem = "⚠️ Comando não reconhecido!"
     
-    # 🔧 ENVIA A RESPOSTA NO PRIVADO DO USUÁRIO
+    # 🔧 CORREÇÃO: Envia a resposta no PRIVADO do usuário
     try:
         await context.bot.send_message(
             chat_id=user_id,
             text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Use /start no grupo para ver os botões novamente."
         )
-        # Confirma no grupo que foi enviado no privado
-        await query.edit_message_text(
+        # 🔧 CORREÇÃO: Em vez de editar, envia uma NOVA mensagem de confirmação
+        await context.bot.send_message(
+            chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
+        # 🔧 Mantém a mensagem original com os botões (NÃO edita)
+        await query.answer("✅ Mensagem enviada no seu privado!")
+        
     except Exception as e:
         print(f"❌ Erro ao enviar mensagem privada: {e}")
-        # Se não conseguir enviar no privado, envia no grupo mesmo
+        # Fallback: envia no grupo
         keyboard = [
             [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
             [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
