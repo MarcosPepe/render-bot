@@ -1255,18 +1255,34 @@ def main():
     
     def run_background_loop():
         """Executa o loop de relatórios em background"""
-        new_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(new_loop)
-        new_loop.run_until_complete(main_loop())
+        try:
+            # Cria um novo loop de eventos para esta thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            
+            # Executa o loop principal
+            new_loop.run_until_complete(main_loop())
+        except Exception as e:
+            print(f"❌ Erro no loop de background: {e}")
     
-    # Inicia o loop em uma thread separada
+    # Inicia o loop em uma thread separada (daemon=True para não travar o servidor)
+    import threading
     thread = threading.Thread(target=run_background_loop, daemon=True)
     thread.start()
     print("✅ Loop de relatórios iniciado em background!")
     
-    # Inicia o servidor
+    # ============================================
+    # Inicia o servidor (NÃO DESLIGA MAIS)
+    # ============================================
+    
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    
+    # 🔧 CORREÇÃO: Executa o servidor em um loop separado
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+    server = uvicorn.Server(config)
+    
+    # 🔧 CORREÇÃO: Inicia o servidor de forma síncrona (não desliga)
+    server.run()
 
 if __name__ == "__main__":
     main()
