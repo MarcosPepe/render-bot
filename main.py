@@ -3,6 +3,8 @@ import time
 import json
 import base64
 import requests
+import threading
+import asyncio
 from datetime import datetime, timedelta
 import firebase_admin
 from firebase_admin import credentials, db
@@ -11,7 +13,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-import asyncio
 
 # ============================================
 # VARIÁVEL PARA CONTROLAR A MENSAGEM DE BOAS-VINDAS
@@ -1214,7 +1215,7 @@ async def main_loop():
             await asyncio.sleep(60)
 
 # ============================================
-# MAIN
+# MAIN CORRIGIDO
 # ============================================
 
 def main():
@@ -1248,15 +1249,23 @@ def main():
     
     app_initialized = False
     
+    # ============================================
+    # 🔧 CORREÇÃO: Executar o loop em uma thread separada
+    # ============================================
+    
+    def run_background_loop():
+        """Executa o loop de relatórios em background"""
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        new_loop.run_until_complete(main_loop())
+    
+    # Inicia o loop em uma thread separada
+    thread = threading.Thread(target=run_background_loop, daemon=True)
+    thread.start()
+    print("✅ Loop de relatórios iniciado em background!")
+    
     # Inicia o servidor
     port = int(os.environ.get("PORT", 8000))
-    
-    # Inicia o loop de relatórios e alertas em background
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(main_loop())
-    
-    # Inicia o servidor
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
 if __name__ == "__main__":
