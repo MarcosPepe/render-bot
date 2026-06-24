@@ -222,13 +222,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Envia a mensagem com os botões
-    mensagem = await update.message.reply_text(
-        "🔹 SISTEMA DE QUALIDADE DO AR\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Clique nos botões abaixo para receber as informações no seu privado:",
+    # 🔧 Envia a mensagem no chat onde o comando foi digitado
+    chat_id = update.effective_chat.id
+    
+    mensagem = await context.bot.send_message(
+        chat_id=chat_id,
+        text="🔹 SISTEMA DE QUALIDADE DO AR\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Clique nos botões abaixo para receber as informações no seu privado:",
         reply_markup=reply_markup
     )
     
-    # 🔧 FIXA A MENSAGEM NO TOPO DO GRUPO (se for grupo e o bot for admin)
+    # 🔧 FIXA A MENSAGEM NO TOPO DO GRUPO
     chat = update.effective_chat
     if chat.type in ["group", "supergroup"]:
         try:
@@ -236,19 +239,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("📌 Mensagem fixada no grupo!")
         except Exception as e:
             print(f"⚠️ Não foi possível fixar a mensagem: {e}")
-            print("   → O bot precisa ser administrador do grupo para fixar mensagens.")
+    
+    # Se o comando foi enviado no privado, avisa
+    if chat.type == "private":
+        await update.message.reply_text(
+            "✅ Os botões foram ativados no grupo!\n"
+            "📌 A mensagem foi fixada no topo do grupo para todos verem."
+        )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("✅ Processando...")
     
-    # Pega o ID e nome do usuário que clicou
     user_id = query.from_user.id
     user_name = query.from_user.first_name or "Usuário"
     
     dados = ler_dados_firebase()
     
-    # Gera a mensagem baseado no botão clicado
     if query.data == "relatorio":
         mensagem = gerar_relatorio(dados)
     elif query.data == "previsao":
@@ -264,18 +271,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         mensagem = "⚠️ Comando não reconhecido!"
     
-    # 🔧 CORREÇÃO: Envia a resposta no PRIVADO do usuário
+    # 🔧 ENVIA A RESPOSTA NO PRIVADO DO USUÁRIO
     try:
         await context.bot.send_message(
             chat_id=user_id,
             text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Use /start no grupo para ver os botões novamente."
         )
-        # 🔧 CORREÇÃO: Em vez de editar, envia uma NOVA mensagem de confirmação
+        
+        # 🔧 Confirma no grupo sem editar a mensagem original
         await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
-        # 🔧 Mantém a mensagem original com os botões (NÃO edita)
+        
         await query.answer("✅ Mensagem enviada no seu privado!")
         
     except Exception as e:
