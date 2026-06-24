@@ -11,6 +11,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+from starlette.requests import Request
 
 # ============================================
 # CONFIGURAÇÕES (variáveis de ambiente)
@@ -42,7 +43,7 @@ def ler_dados_firebase():
         ref = db.reference('/sensor')
         return ref.get()
     except Exception as e:
-        print(f"❌ Erro: {e}")
+        print(f"❌ Erro ao ler Firebase: {e}")
         return None
 
 def ler_grafico_firebase():
@@ -258,7 +259,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============================================
-# WEBHOOK (Starlette) - CORRIGIDO
+# WEBHOOK (CORRIGIDO)
 # ============================================
 
 app = Starlette()
@@ -277,6 +278,7 @@ async def webhook(request):
     try:
         # Pega o corpo da requisição
         body = await request.json()
+        print(f"📨 Webhook recebido: {body}")
         
         # Cria o objeto Update
         update = Update.de_json(body, bot_application.bot)
@@ -318,7 +320,7 @@ def main():
     
     # Configura o webhook
     webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
-    bot_application.bot.set_webhook(webhook_url)
+    bot_application.bot.set_webhook(url=webhook_url)
     print(f"✅ Webhook configurado: {webhook_url}")
     
     # Inicia o servidor
