@@ -282,18 +282,18 @@ async def webhook(request):
         print(f"📨 Webhook recebido: {body}")
         
         # 🔧 CORREÇÃO: Inicializa a aplicação se necessário
-        if not app_initialized:
+        if not app_initialized and bot_application:
             await bot_application.initialize()
             app_initialized = True
             print("✅ Aplicação inicializada!")
         
-        # Cria o objeto Update
-        update = Update.de_json(body, bot_application.bot)
+        if bot_application:
+            # Cria o objeto Update
+            update = Update.de_json(body, bot_application.bot)
+            
+            # Processa a atualização
+            await bot_application.process_update(update)
         
-        # Processa a atualização
-        await bot_application.process_update(update)
-        
-        # Retorna 200 OK para o Telegram
         return JSONResponse({"status": "ok"})
         
     except Exception as e:
@@ -325,16 +325,9 @@ def main():
     bot_application.add_handler(CommandHandler("start", start))
     bot_application.add_handler(CallbackQueryHandler(button_callback))
     
-    # Configura o webhook
-    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/webhook"
-    # Na versão 21.x, set_webhook é async, mas podemos usar de forma síncrona com run
-    import asyncio
-    asyncio.run(bot_application.bot.set_webhook(url=webhook_url))
-    print(f"✅ Webhook configurado: {webhook_url}")
-    
     app_initialized = False
     
-    # Inicia o servidor
+    # Inicia o servidor (o webhook será configurado na primeira requisição)
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
