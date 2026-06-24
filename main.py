@@ -20,6 +20,13 @@ import asyncio
 ultima_mensagem_boas_vindas = None
 
 # ============================================
+# VARIÁVEL PARA CONTROLAR O ÚLTIMO ALERTA ENVIADO
+# ============================================
+
+ultimo_alerta_enviado = None
+INTERVALO_MINIMO_ALERTA = 3600  # 1 hora em segundos
+
+# ============================================
 # AJUSTE DE FUSO HORÁRIO (Brasília UTC-3)
 # ============================================
 
@@ -466,6 +473,43 @@ def gerar_alertas_meteorologicos():
     except Exception as e:
         print(f"❌ Erro ao gerar alertas: {e}")
         return f"❌ Erro ao gerar alertas: {e}"
+
+# ============================================
+# 🔥 NOVA FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
+# ============================================
+
+async def verificar_e_enviar_alertas():
+    """Verifica se há alertas meteorológicos e envia automaticamente no grupo"""
+    global ultimo_alerta_enviado
+    
+    try:
+        # Gera os alertas
+        alerta = gerar_alertas_meteorologicos()
+        
+        # Se não houver alerta (tempo estável), não faz nada
+        if "✅ TEMPO ESTÁVEL!" in alerta:
+            return
+        
+        # Verifica se já passou tempo suficiente desde o último alerta
+        if ultimo_alerta_enviado is not None:
+            tempo_decorrido = time.time() - ultimo_alerta_enviado
+            if tempo_decorrido < INTERVALO_MINIMO_ALERTA:
+                print(f"⏳ Último alerta enviado há {tempo_decorrido:.0f}s. Aguardando {INTERVALO_MINIMO_ALERTA}s.")
+                return
+        
+        # Envia o alerta no grupo
+        await bot_application.bot.send_message(
+            chat_id=CHAT_ID,
+            text=alerta,
+            parse_mode="HTML"
+        )
+        
+        # Atualiza o timestamp do último alerta
+        ultimo_alerta_enviado = time.time()
+        print(f"🚨 Alerta meteorológico enviado automaticamente às {agora_str()}")
+        
+    except Exception as e:
+        print(f"❌ Erro ao verificar/enviar alertas: {e}")
 
 # ============================================
 # FUNÇÃO: GERAR RELATÓRIO EM TEXTO
@@ -935,8 +979,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
         
-        # 🔧 Agenda a exclusão da mensagem após 15 segundos
-        await asyncio.sleep(90)
+        # 🔧 Agenda a exclusão da mensagem após 30 segundos
+        await asyncio.sleep(30)
         await context.bot.delete_message(
             chat_id=query.message.chat.id,
             message_id=msg_confirmacao.message_id
@@ -999,16 +1043,28 @@ async def webhook(request):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 # ============================================
-# LOOP PRINCIPAL (para relatórios programados)
+# LOOP PRINCIPAL (para relatórios programados + alertas)
 # ============================================
 
 async def main_loop():
-    """Loop que verifica os horários programados (horário de Brasília)"""
+    """Loop que verifica os horários programados (horário de Brasília) e alertas"""
     print(f"🕐 Loop iniciado. Horário de Brasília: {agora_str()}")
+    
+    contador_alertas = 0
+    ultima_verificacao_alertas = 0
+    
     while True:
         try:
+            # Verifica horários programados (07h, 12h, 15h, 19h, 20h)
             await verificar_horarios()
+            
+            # 🔥 Verifica alertas meteorológicos a cada 5 minutos
+            if time.time() - ultima_verificacao_alertas >= 300:  # 5 minutos
+                ultima_verificacao_alertas = time.time()
+                await verificar_e_enviar_alertas()
+            
             await asyncio.sleep(30)  # Verifica a cada 30 segundos
+            
         except Exception as e:
             print(f"❌ Erro no loop: {e}")
             await asyncio.sleep(60)
@@ -1032,6 +1088,9 @@ def main():
     print("   07h, 12h, 15h, 19h - Dados em tempo real")
     print("   20h - Relatório diário com gráfico")
     print("━━━━━━━━━━━━━━━━━━━━━━")
+    print("🔥 Alertas meteorológicos automáticos: ATIVADOS")
+    print("   ⏱️ Verificação a cada 5 minutos")
+    print("   🚨 Envio automático no grupo quando detectado")
     print(f"📍 Localização: {LATITUDE}, {LONGITUDE}")
     
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -1046,7 +1105,7 @@ def main():
     # Inicia o servidor
     port = int(os.environ.get("PORT", 8000))
     
-    # Inicia o loop de relatórios em background
+    # Inicia o loop de relatórios e alertas em background
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(main_loop())
