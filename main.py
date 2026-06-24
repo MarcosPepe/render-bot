@@ -361,6 +361,10 @@ def gerar_alertas_meteorologicos():
         clima_api = previsao_atual.get('clima', 'Desconhecido')
         temp_max_hoje = previsao_hoje.get('temp_max', 0)
         precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
+        weather_code_hoje = previsao_hoje.get('weather_code', 0)
+        
+        # Códigos de clima que indicam chuva
+        codigos_chuva = [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99]
         
         alertas = "⚠️ ALERTAS METEOROLÓGICOS\n━━━━━━━━━━━━━━━━━━━━━━\n"
         tem_alerta = False
@@ -417,7 +421,7 @@ def gerar_alertas_meteorologicos():
                     alertas += f"📊 ALERTA DE PRESSÃO!\n"
                     if var_press < 0:
                         alertas += f"   ⬇️ Queda de {abs(var_press):.1f} hPa em 1h\n"
-                        if precipitacao_hoje > 5:
+                        if precipitacao_hoje > 5 or weather_code_hoje in codigos_chuva:
                             alertas += f"   🌧️ Previsão de {precipitacao_hoje:.1f}mm de chuva\n"
                             alertas += f"   ⚠️ Possibilidade de TEMPESTADE!\n"
                         else:
@@ -428,17 +432,28 @@ def gerar_alertas_meteorologicos():
                     alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
         # ============================================
-        # ALERTA 3: PRECIPITAÇÃO (Chuva prevista)
+        # ALERTA 3: CHUVA (baseado no código do clima E precipitação)
         # ============================================
         
-        if precipitacao_hoje > 10:
+        if weather_code_hoje in codigos_chuva or precipitacao_hoje > 5:
             tem_alerta = True
             alertas += f"🌧️ ALERTA DE CHUVA!\n"
             alertas += f"   ☔ Previsão de {precipitacao_hoje:.1f}mm de chuva hoje\n"
+            
+            # Identifica o tipo de chuva pelo código
+            if weather_code_hoje in [95, 96, 99]:
+                alertas += f"   ⛈️ TROVOADA! Cuidado com raios e ventos fortes.\n"
+            elif weather_code_hoje in [80, 81, 82]:
+                alertas += f"   ⚡ PANCADAS DE CHUVA! Pode alagar rapidamente.\n"
+            elif weather_code_hoje in [61, 63, 65]:
+                alertas += f"   🌧️ Chuva constante. Leve guarda-chuva.\n"
+            elif weather_code_hoje in [51, 53, 55]:
+                alertas += f"   🌦️ Garoa fina. Pode molhar.\n"
+            
             if precipitacao_hoje > 20:
                 alertas += f"   ⚠️ CHUVA FORTE! Cuidado com enchentes.\n"
             elif precipitacao_hoje > 10:
-                alertas += f"   ⚠️ Chuva moderada. Leve guarda-chuva.\n"
+                alertas += f"   ⚠️ Chuva moderada.\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
         # ============================================
