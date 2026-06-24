@@ -139,10 +139,11 @@ def get_emoji_classificacao(pm25):
 def obter_previsao_tempo():
     """
     Busca previsão do tempo para sua localização via Open-Meteo API
-    Retorna um dicionário com os dados de previsão
+    Agora com previsão para 3 dias
     """
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=2"
+        # Mudamos forecast_days para 4 (hoje + 3 dias)
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=4"
         
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
@@ -183,29 +184,43 @@ def obter_previsao_tempo():
         weather_code = current.get('weather_code', 0)
         current_weather = weather_codes.get(weather_code, "❓ Desconhecido")
         
-        # Previsão para hoje e amanhã
+        # Dicionário para dias da semana
+        dias_semana = {
+            0: "Segunda-feira",
+            1: "Terça-feira", 
+            2: "Quarta-feira",
+            3: "Quinta-feira",
+            4: "Sexta-feira",
+            5: "Sábado",
+            6: "Domingo"
+        }
+        
+        # Previsão para hoje e próximos dias
         hoje = data_iso()
         previsao_hoje = {}
-        previsao_amanha = {}
+        previsao_proximos_dias = []
         
-        if 'time' in daily and len(daily['time']) >= 2:
+        if 'time' in daily and len(daily['time']) >= 4:
             for i, data in enumerate(daily['time']):
+                # Converte a data para dia da semana
+                data_obj = datetime.strptime(data, '%Y-%m-%d')
+                dia_semana = dias_semana[data_obj.weekday()]
+                
+                previsao_dia = {
+                    'data': data,
+                    'dia_semana': dia_semana,
+                    'temp_max': daily['temperature_2m_max'][i],
+                    'temp_min': daily['temperature_2m_min'][i],
+                    'precipitacao': daily['precipitation_sum'][i],
+                    'weather_code': daily['weather_code'][i],
+                    'nascer_sol': daily['sunrise'][i].split('T')[1] if 'sunrise' in daily else '',
+                    'por_sol': daily['sunset'][i].split('T')[1] if 'sunset' in daily else ''
+                }
+                
                 if data == hoje:
-                    previsao_hoje = {
-                        'temp_max': daily['temperature_2m_max'][i],
-                        'temp_min': daily['temperature_2m_min'][i],
-                        'precipitacao': daily['precipitation_sum'][i],
-                        'weather_code': daily['weather_code'][i],
-                        'nascer_sol': daily['sunrise'][i].split('T')[1] if 'sunrise' in daily else '',
-                        'por_sol': daily['sunset'][i].split('T')[1] if 'sunset' in daily else ''
-                    }
-                elif i == 1:
-                    previsao_amanha = {
-                        'temp_max': daily['temperature_2m_max'][i],
-                        'temp_min': daily['temperature_2m_min'][i],
-                        'precipitacao': daily['precipitation_sum'][i],
-                        'weather_code': daily['weather_code'][i]
-                    }
+                    previsao_hoje = previsao_dia
+                else:
+                    previsao_proximos_dias.append(previsao_dia)
         
         return {
             'atual': {
@@ -218,7 +233,7 @@ def obter_previsao_tempo():
                 'wind_speed': current.get('wind_speed_10m', 0)
             },
             'hoje': previsao_hoje,
-            'amanha': previsao_amanha
+            'proximos_dias': previsao_proximos_dias[:3]  # Pega apenas os 3 próximos dias
         }
         
     except Exception as e:
@@ -239,24 +254,38 @@ def analisar_previsao(dados_sensor, previsao):
     
     previsao_atual = previsao.get('atual', {})
     previsao_hoje = previsao.get('hoje', {})
-    previsao_amanha = previsao.get('amanha', {})
+    proximos_dias = previsao.get('proximos_dias', [])
     
     temp_api = previsao_atual.get('temp', 0)
     clima_api = previsao_atual.get('clima', 'Desconhecido')
     temp_max_hoje = previsao_hoje.get('temp_max', 0)
     temp_min_hoje = previsao_hoje.get('temp_min', 0)
     precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
+    weather_code_hoje = previsao_hoje.get('weather_code', 0)
+    wind_speed = previsao_atual.get('wind_speed', 0)
     
     # ============================================
     # ANÁLISE DA TEMPERATURA
     # ============================================
     
-    analise_temp = ""
+    diferenca_temp = abs(temp_sensor - temp_api)
+    
     if temp_sensor > 0:
-        if abs(temp_sensor - temp_api) > 3:
-            analise_temp = f"⚠️ Seu sensor ({temp_sensor:.1f}°C) está {temp_sensor - temp_api:.1f}°C diferente da previsão ({temp_api:.1f}°C)."
+        if diferenca_temp > 2:
+            analise_temp = f"⚠️ Seu sensor ({temp_sensor:.1f}°C) está {diferenca_temp:.1f}°C diferente da previsão ({temp_api:.1f}°C)."
         else:
             analise_temp = f"✅ Sensor ({temp_sensor:.1f}°C) alinhado com a previsão ({temp_api:.1f}°C)."
+    
+    # ============================================
+    # EXPLICAÇÃO DA DIFERENÇA
+    # ============================================
+    
+    explicacao_diferenca = ""
+    if diferenca_temp > 2:
+        if temp_sensor > temp_api:
+            explicacao_diferenca = f"(Observação: A diferença entre a PREVISÃO e a Temperatura ATUAL do sensor é que a temperatura ainda poderá diminuir conforme o decorrer do dia, se aproximando da previsão de {temp_api:.1f}°C)"
+        else:
+            explicacao_diferenca = f"(Observação: A diferença entre a PREVISÃO e a Temperatura ATUAL do sensor é que a temperatura ainda poderá subir conforme o decorrer do dia, se aproximando da previsão de {temp_api:.1f}°C)"
     
     # ============================================
     # ANÁLISE DE TENDÊNCIA
@@ -297,7 +326,70 @@ def analisar_previsao(dados_sensor, previsao):
             umid_analise = "💧 Umidade confortável."
     
     # ============================================
-    # MONTAGEM DA MENSAGEM
+    # PREVISÃO PARA OS PRÓXIMOS 3 DIAS
+    # ============================================
+    
+    previsao_dias = ""
+    if proximos_dias:
+        previsao_dias = "\n━━━━━━━━━━━━━━━━━━━━━━\n📅 Previsão para os próximos 3 dias\n"
+        
+        for i, dia in enumerate(proximos_dias[:3]):
+            # Emoji para o clima
+            weather_code = dia.get('weather_code', 0)
+            if weather_code in [0, 1]:
+                clima_emoji = "☀️"
+            elif weather_code in [2, 3]:
+                clima_emoji = "⛅"
+            elif weather_code in [45, 48]:
+                clima_emoji = "🌫️"
+            elif weather_code in [51, 53, 55, 61, 63, 65, 80, 81, 82]:
+                clima_emoji = "🌧️"
+            elif weather_code in [71, 73, 75]:
+                clima_emoji = "❄️"
+            elif weather_code in [95, 96, 99]:
+                clima_emoji = "⛈️"
+            else:
+                clima_emoji = "☁️"
+            
+            previsao_dias += f"\n{dia.get('dia_semana', 'Dia')}:\n"
+            previsao_dias += f"   🌡️ Máxima: {dia.get('temp_max', 0):.1f}°C\n"
+            previsao_dias += f"   🌡️ Mínima: {dia.get('temp_min', 0):.1f}°C\n"
+            previsao_dias += f"   🌧️ Chuva: {dia.get('precipitacao', 0):.1f} mm\n"
+            previsao_dias += f"   {clima_emoji} {dia.get('weather_code', 'N/A')}\n"
+        
+        # ============================================
+        # RESUMO DA TENDÊNCIA PARA OS PRÓXIMOS DIAS
+        # ============================================
+        
+        # Analisa a tendência de temperatura
+        if len(proximos_dias) >= 2:
+            temp_atual = temp_sensor
+            temp_futura = proximos_dias[0].get('temp_max', temp_atual)
+            temp_ultimo = proximos_dias[2].get('temp_max', temp_futura) if len(proximos_dias) >= 3 else temp_futura
+            
+            if temp_ultimo > temp_atual + 3:
+                tendencia_futura = "📈 Previsão de AUMENTO de temperatura nos próximos dias."
+            elif temp_ultimo < temp_atual - 3:
+                tendencia_futura = "📉 Previsão de DIMINUIÇÃO de temperatura nos próximos dias."
+            else:
+                tendencia_futura = "➡️ Previsão de temperatura ESTÁVEL nos próximos dias."
+            
+            # Verifica se vai chover nos próximos dias
+            chuva_futura = False
+            for dia in proximos_dias[:3]:
+                if dia.get('precipitacao', 0) > 1:
+                    chuva_futura = True
+                    break
+            
+            if chuva_futura:
+                tendencia_futura += " 🌧️ Possibilidade de chuva nos próximos dias."
+            else:
+                tendencia_futura += " ☀️ Tempo seco e estável nos próximos dias."
+            
+            previsao_dias += f"\n{tendencia_futura}"
+    
+    # ============================================
+    # MONTAGEM DA MENSAGEM COMPLETA
     # ============================================
     
     mensagem = f"""🌤️ PREVISÃO DO TEMPO COMPLETA
@@ -312,18 +404,21 @@ def analisar_previsao(dados_sensor, previsao):
    ☁️ Clima: {clima_api}
    💧 Umidade: {previsao_atual.get('umid', 0):.0f}%
    🌧️ Precipitação: {previsao_atual.get('precipitacao', 0):.1f} mm
-   💨 Vento: {previsao_atual.get('wind_speed', 0):.1f} km/h
+   💨 Vento: {wind_speed:.1f} km/h
 ━━━━━━━━━━━━━━━━━━━━━━
 📅 Previsão para hoje:
    🌡️ Máxima: {temp_max_hoje:.1f}°C
    🌡️ Mínima: {temp_min_hoje:.1f}°C
    🌧️ Chuva: {precipitacao_hoje:.1f} mm
+{previsao_dias}
 ━━━━━━━━━━━━━━━━━━━━━━
 🔮 Análise:
 {analise_temp}
 {tendencia}
 {chuva}
 {umid_analise}
+
+{explicacao_diferenca}
 ━━━━━━━━━━━━━━━━━━━━━━
 📌 Atualizado: {agora_str()} - {hoje_str()}"""
 
