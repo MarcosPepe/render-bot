@@ -841,14 +841,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "relatorio":
         mensagem = gerar_relatorio_tempo_real(dados)
     elif query.data == "previsao":
-        # Previsão com Open-Meteo
         previsao = obter_previsao_tempo()
         if previsao:
             mensagem = analisar_previsao(dados, previsao)
         else:
             mensagem = "⚠️ Dados de previsão indisponíveis no momento. Tente novamente mais tarde."
     elif query.data == "alertas":
-        # Alertas meteorológicos com Open-Meteo
         mensagem = gerar_alertas_meteorologicos()
     elif query.data == "grafico":
         sucesso = enviar_grafico_telegram_privado(user_id)
@@ -860,17 +858,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensagem = "⚠️ Comando não reconhecido!"
     
     try:
+        # 🔧 REMOVIDO: mensagem extra no privado
+        # Agora envia APENAS a resposta direta no privado
         await context.bot.send_message(
             chat_id=user_id,
-            text=mensagem + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📊 Use /start no grupo para ver os botões novamente."
+            text=mensagem  # ← REMOVIDO o texto extra
         )
+        
+        # Confirma no grupo que foi enviado no privado (mantido)
         await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
+        
         await query.answer("✅ Mensagem enviada no seu privado!")
+        
     except Exception as e:
         print(f"❌ Erro ao enviar privado: {e}")
+        # Fallback: se não conseguir enviar no privado, envia no grupo
         keyboard = [
             [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
             [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
