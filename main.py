@@ -142,7 +142,7 @@ def obter_previsao_tempo():
     Retorna um dicionário com os dados de previsão
     """
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=2"
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=2"
         
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
@@ -156,8 +156,6 @@ def obter_previsao_tempo():
         daily = dados.get('daily', {})
         
         # Código de clima (weather_code)
-        # 0 = Céu limpo, 1 = Principalmente limpo, 2 = Parcialmente nublado, 3 = Nublado
-        # 45 = Neblina, 51 = Garoa leve, 61 = Chuva leve, 80 = Pancadas de chuva
         weather_codes = {
             0: "☀️ Céu limpo",
             1: "🌤️ Principalmente limpo",
@@ -216,7 +214,8 @@ def obter_previsao_tempo():
                 'sensacao': current.get('apparent_temperature', 0),
                 'precipitacao': current.get('precipitation', 0),
                 'clima': current_weather,
-                'weather_code': weather_code
+                'weather_code': weather_code,
+                'wind_speed': current.get('wind_speed_10m', 0)
             },
             'hoje': previsao_hoje,
             'amanha': previsao_amanha
@@ -313,6 +312,7 @@ def analisar_previsao(dados_sensor, previsao):
    ☁️ Clima: {clima_api}
    💧 Umidade: {previsao_atual.get('umid', 0):.0f}%
    🌧️ Precipitação: {previsao_atual.get('precipitacao', 0):.1f} mm
+   💨 Vento: {previsao_atual.get('wind_speed', 0):.1f} km/h
 ━━━━━━━━━━━━━━━━━━━━━━
 📅 Previsão para hoje:
    🌡️ Máxima: {temp_max_hoje:.1f}°C
@@ -330,7 +330,7 @@ def analisar_previsao(dados_sensor, previsao):
     return mensagem
 
 # ============================================
-# FUNÇÃO: GERAR ALERTAS METEOROLÓGICOS (COM ANÁLISE)
+# FUNÇÃO: GERAR ALERTAS METEOROLÓGICOS (COM ANÁLISE COMBINADA)
 # ============================================
 
 def gerar_alertas_meteorologicos():
@@ -360,8 +360,10 @@ def gerar_alertas_meteorologicos():
         temp_api = previsao_atual.get('temp', 0)
         clima_api = previsao_atual.get('clima', 'Desconhecido')
         temp_max_hoje = previsao_hoje.get('temp_max', 0)
+        temp_min_hoje = previsao_hoje.get('temp_min', 0)
         precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
         weather_code_hoje = previsao_hoje.get('weather_code', 0)
+        wind_speed = previsao_atual.get('wind_speed', 0)
         
         # Códigos de clima que indicam chuva
         codigos_chuva = [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99]
@@ -370,7 +372,7 @@ def gerar_alertas_meteorologicos():
         tem_alerta = False
         
         # ============================================
-        # ALERTA 1: TEMPERATURA (Variação em 1h)
+        # ALERTA 1: TEMPERATURA (Variação em 1h + Previsão)
         # ============================================
         
         if historico:
@@ -384,24 +386,39 @@ def gerar_alertas_meteorologicos():
                 if abs(var_temp) >= 2.0:
                     tem_alerta = True
                     alertas += f"🌡️ ALERTA DE TEMPERATURA!\n"
+                    
+                    # 🔥 ONDA DE CALOR (Subida + Previsão de calor)
                     if var_temp > 0:
                         alertas += f"   🔥 Subida de {abs(var_temp):.1f}°C em 1h\n"
-                        # Verifica se a previsão confirma onda de calor
+                        
+                        # Combinação: sensor subiu + previsão confirma calor
                         if temp_max_hoje > 30 and temp_sensor > 25:
-                            alertas += f"   ☀️ PREVISÃO: Temp máxima de {temp_max_hoje:.1f}°C hoje\n"
-                            alertas += f"   ⚠️ Possível ONDA DE CALOR! Mantenha-se hidratado.\n"
+                            alertas += f"   ☀️ PREVISÃO CONFIRMA: Temp máxima de {temp_max_hoje:.1f}°C hoje\n"
+                            alertas += f"   ⚠️ ONDA DE CALOR CONFIRMADA! Mantenha-se hidratado.\n"
                         elif temp_max_hoje > temp_sensor + 5:
-                            alertas += f"   ⚠️ AQUECIMENTO RÁPIDO! {temp_sensor:.1f}°C → {temp_max_hoje:.1f}°C\n"
-                            alertas += f"   ⚠️ Possível ONDA DE CALOR nas próximas horas!\n"
+                            alertas += f"   ⚠️ PREVISÃO INDICA: {temp_sensor:.1f}°C → {temp_max_hoje:.1f}°C\n"
+                            alertas += f"   ⚠️ ONDA DE CALOR nas próximas horas!\n"
+                        elif temp_max_hoje > 28:
+                            alertas += f"   ⚠️ Dia quente previsto ({temp_max_hoje:.1f}°C). Fique atento!\n"
                         else:
-                            alertas += f"   ⚠️ Aquecimento significativo. Fique atento!\n"
+                            alertas += f"   ⚠️ Aquecimento significativo, mas previsão indica clima ameno.\n"
+                    
+                    # ❄️ FRENTE FRIA (Queda + Previsão de frio)
                     else:
                         alertas += f"   ❄️ Queda de {abs(var_temp):.1f}°C em 1h\n"
-                        if temp_sensor < 18:
-                            alertas += f"   ❄️ Temperatura já está baixa ({temp_sensor:.1f}°C)\n"
-                            alertas += f"   ⚠️ Possível FRENTE FRIA! Agasalhe-se.\n"
+                        
+                        # Combinação: sensor caiu + previsão confirma frio
+                        if temp_min_hoje < 18 and temp_sensor < 20:
+                            alertas += f"   ❄️ PREVISÃO CONFIRMA: Temp mínima de {temp_min_hoje:.1f}°C hoje\n"
+                            alertas += f"   ⚠️ FRENTE FRIA CONFIRMADA! Agasalhe-se.\n"
+                        elif temp_min_hoje < temp_sensor - 3:
+                            alertas += f"   ⚠️ PREVISÃO INDICA: {temp_sensor:.1f}°C → {temp_min_hoje:.1f}°C\n"
+                            alertas += f"   ⚠️ FRENTE FRIA nas próximas horas!\n"
+                        elif temp_min_hoje < 20:
+                            alertas += f"   ⚠️ Noite fria prevista ({temp_min_hoje:.1f}°C). Prepare-se!\n"
                         else:
-                            alertas += f"   ⚠️ Possível frente fria se aproximando!\n"
+                            alertas += f"   ⚠️ Resfriamento significativo, mas previsão indica clima ameno.\n"
+                    
                     alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
         # ============================================
@@ -469,6 +486,22 @@ def gerar_alertas_meteorologicos():
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
         # ============================================
+        # ALERTA 5: VENTOS FORTES (Baseado na Open-Meteo)
+        # ============================================
+        
+        if wind_speed > 40:  # > 40 km/h
+            tem_alerta = True
+            alertas += f"🌬️ ALERTA DE VENTOS FORTES!\n"
+            alertas += f"   💨 Velocidade: {wind_speed:.0f} km/h\n"
+            if wind_speed > 60:
+                alertas += f"   ⚠️ VENTOS MUITO FORTES! Risco de queda de árvores.\n"
+            elif wind_speed > 50:
+                alertas += f"   ⚠️ Ventos fortes. Cuidado com objetos soltos.\n"
+            else:
+                alertas += f"   ⚠️ Ventos moderados a fortes. Preste atenção.\n"
+            alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # ============================================
         # SE NÃO HOUVER ALERTA
         # ============================================
         
@@ -478,6 +511,8 @@ def gerar_alertas_meteorologicos():
             alertas += f"🌡️ {temp_sensor:.1f}°C | 💧 {umid_sensor:.0f}%\n"
             alertas += f"📊 {pressao_sensor:.0f} hPa\n"
             alertas += f"☁️ {clima_api}\n"
+            if wind_speed > 20:
+                alertas += f"💨 Vento: {wind_speed:.0f} km/h\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
             alertas += "Nenhum alerta meteorológico previsto.\n"
             alertas += "Condições climáticas estáveis.\n"
@@ -490,7 +525,7 @@ def gerar_alertas_meteorologicos():
         return f"❌ Erro ao gerar alertas: {e}"
 
 # ============================================
-# 🔥 NOVA FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
+# 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
 # ============================================
 
 async def verificar_e_enviar_alertas():
@@ -994,8 +1029,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
         
-        # 🔧 Agenda a exclusão da mensagem após 30 segundos
-        await asyncio.sleep(30)
+        # 🔧 Agenda a exclusão da mensagem após 15 segundos
+        await asyncio.sleep(15)
         await context.bot.delete_message(
             chat_id=query.message.chat.id,
             message_id=msg_confirmacao.message_id
@@ -1065,12 +1100,11 @@ async def main_loop():
     """Loop que verifica os horários programados (horário de Brasília) e alertas"""
     print(f"🕐 Loop iniciado. Horário de Brasília: {agora_str()}")
     
-    contador_alertas = 0
     ultima_verificacao_alertas = 0
     
     while True:
         try:
-            # Verifica horários programados (07h, 12h, 15h, 19h, 20h)
+            # Verifica horários programados
             await verificar_horarios()
             
             # 🔥 Verifica alertas meteorológicos a cada 5 minutos
@@ -1106,6 +1140,8 @@ def main():
     print("🔥 Alertas meteorológicos automáticos: ATIVADOS")
     print("   ⏱️ Verificação a cada 5 minutos")
     print("   🚨 Envio automático no grupo quando detectado")
+    print("   🌧️ Detecção de chuva por código do clima + precipitação")
+    print("   🌬️ Detecção de ventos fortes")
     print(f"📍 Localização: {LATITUDE}, {LONGITUDE}")
     
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
