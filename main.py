@@ -7,11 +7,17 @@ from datetime import datetime, timedelta
 import firebase_admin
 from firebase_admin import credentials, db
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 import asyncio
+
+# ============================================
+# VARIÁVEL PARA CONTROLAR A MENSAGEM DE BOAS-VINDAS
+# ============================================
+
+ultima_mensagem_boas_vindas = None
 
 # ============================================
 # AJUSTE DE FUSO HORÁRIO (Brasília UTC-3)
@@ -796,6 +802,65 @@ def enviar_grafico_telegram_privado(chat_id):
         return False
 
 # ============================================
+# FUNÇÃO: ENVIAR BOAS-VINDAS E APAGAR A ANTERIOR
+# ============================================
+
+async def enviar_boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global ultima_mensagem_boas_vindas
+    
+    # Verifica se é um novo membro entrando no grupo
+    if update.message and update.message.new_chat_members:
+        chat_id = update.effective_chat.id
+        
+        # 🔧 APAGA A MENSAGEM ANTERIOR (se existir)
+        if ultima_mensagem_boas_vindas:
+            try:
+                await context.bot.delete_message(
+                    chat_id=chat_id,
+                    message_id=ultima_mensagem_boas_vindas
+                )
+                print("🗑️ Mensagem de boas-vindas anterior apagada!")
+            except Exception as e:
+                print(f"⚠️ Erro ao apagar mensagem anterior: {e}")
+        
+        # Envia a nova mensagem de boas-vindas
+        keyboard = [
+            [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
+            [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
+            [InlineKeyboardButton("⚠️ Alertas Meteorológicos", callback_data="alertas")],
+            [InlineKeyboardButton("📈 Gráfico Diário", callback_data="grafico")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Nome do novo membro
+        for member in update.message.new_chat_members:
+            nome = member.first_name or "Novo membro"
+            
+            mensagem = await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"👋 Seja bem-vindo(a), {nome}!\n\n"
+                     f"🔹 SISTEMA DE QUALIDADE DO AR\n"
+                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                     f"📊 Clique nos botões abaixo para receber as informações no seu privado:\n\n"
+                     f"📌 As mensagens de boas-vindas são apagadas automaticamente para manter o grupo organizado.",
+                reply_markup=reply_markup
+            )
+            
+            # 🔧 GUARDA O ID DA NOVA MENSAGEM
+            ultima_mensagem_boas_vindas = mensagem.message_id
+            print(f"📌 Nova mensagem de boas-vindas guardada (ID: {ultima_mensagem_boas_vindas})")
+            
+            # Fixa a mensagem no topo do grupo
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=chat_id,
+                    message_id=mensagem.message_id
+                )
+                print("📌 Mensagem fixada no topo do grupo!")
+            except Exception as e:
+                print(f"⚠️ Não foi possível fixar: {e}")
+
+# ============================================
 # COMANDOS DO TELEGRAM (BOTÕES)
 # ============================================
 
@@ -864,15 +929,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=mensagem
         )
         
-        # 🔧 NOVO: Envia a confirmação no grupo e agenda para apagar
+        # 🔧 Envia a confirmação no grupo e agenda para apagar
         msg_confirmacao = await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
         
         # 🔧 Agenda a exclusão da mensagem após 15 segundos
-        import asyncio
-        await asyncio.sleep(15)
+        await asyncio.sleep(90)
         await context.bot.delete_message(
             chat_id=query.message.chat.id,
             message_id=msg_confirmacao.message_id
@@ -973,6 +1037,9 @@ def main():
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_application.add_handler(CommandHandler("start", start))
     bot_application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # 🔧 ADICIONA O HANDLER PARA NOVOS MEMBROS
+    bot_application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, enviar_boas_vindas))
     
     app_initialized = False
     
