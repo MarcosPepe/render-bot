@@ -858,17 +858,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensagem = "⚠️ Comando não reconhecido!"
     
     try:
-        # 🔧 REMOVIDO: mensagem extra no privado
-        # Agora envia APENAS a resposta direta no privado
+        # Envia a resposta no privado
         await context.bot.send_message(
             chat_id=user_id,
-            text=mensagem  # ← REMOVIDO o texto extra
+            text=mensagem
         )
         
-        # Confirma no grupo que foi enviado no privado (mantido)
-        await context.bot.send_message(
+        # 🔧 NOVO: Envia a confirmação no grupo e agenda para apagar
+        msg_confirmacao = await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
+        )
+        
+        # 🔧 Agenda a exclusão da mensagem após 15 segundos
+        import asyncio
+        await asyncio.sleep(15)
+        await context.bot.delete_message(
+            chat_id=query.message.chat.id,
+            message_id=msg_confirmacao.message_id
         )
         
         await query.answer("✅ Mensagem enviada no seu privado!")
