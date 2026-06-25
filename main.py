@@ -1194,13 +1194,20 @@ async def webhook(request):
 
 async def main_loop():
     """Loop que verifica os horários programados (horário de Brasília) e alertas"""
+    global bot_application
+    
     print(f"🕐 Loop iniciado. Horário de Brasília: {agora_str()}")
     
     ultima_verificacao_alertas = 0
     
     while True:
         try:
-            # Verifica horários programados
+            # Aguarda o bot_application ser inicializado
+            if bot_application is None:
+                await asyncio.sleep(5)
+                continue
+            
+            # Verifica horários programados usando o bot_application global
             await verificar_horarios()
             
             # 🔥 Verifica alertas meteorológicos a cada 5 minutos
@@ -1240,14 +1247,57 @@ def main():
     print("   🌬️ Detecção de ventos fortes")
     print(f"📍 Localização: {LATITUDE}, {LONGITUDE}")
     
+    # Inicializa a aplicação do bot
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_application.add_handler(CommandHandler("start", start))
     bot_application.add_handler(CallbackQueryHandler(button_callback))
     
-    # 🔧 ADICIONA O HANDLER PARA NOVOS MEMBROS
+    # Adiciona o handler para novos membros
     bot_application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, enviar_boas_vindas))
     
     app_initialized = False
+    
+    # ============================================
+    # 🔧 CORREÇÃO: Inicia o loop usando asyncio.create_task
+    # ============================================
+    
+    async def start_background_tasks():
+        """Inicia as tarefas em background"""
+        # Inicia o loop de relatórios
+        asyncio.create_task(main_loop())
+        print("✅ Loop de relatórios iniciado!")
+    
+    # Cria um loop de eventos para executar as tarefas em background
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Inicia as tarefas em background
+    loop.run_until_complete(start_background_tasks())
+    
+    # ============================================
+    # Inicia o servidor
+    # ============================================
+    
+    # Nota: O servidor precisa ser iniciado em uma thread separada
+    # porque o loop de eventos já está rodando
+    
+    def run_server():
+        port = int(os.environ.get("PORT", 8000))
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+        server = uvicorn.Server(config)
+        server.run()
+    
+    # Inicia o servidor em uma thread separada
+    import threading
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    print("✅ Servidor iniciado!")
+    
+    # Mantém o loop principal rodando
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        print("🛑 Servidor interrompido!")
     
     # ============================================
     # 🔧 CORREÇÃO: Executar o loop em uma thread separada
