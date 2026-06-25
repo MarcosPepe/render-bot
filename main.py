@@ -25,7 +25,7 @@ ultima_mensagem_boas_vindas = None
 # ============================================
 
 ultimo_alerta_enviado = None
-INTERVALO_MINIMO_ALERTA = 3600  # 1 hora em segundos
+INTERVALO_MINIMO_ALERTA = 28800  # 1 hora em segundos
 
 # ============================================
 # AJUSTE DE FUSO HORÁRIO (Brasília UTC-3)
