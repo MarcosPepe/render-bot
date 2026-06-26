@@ -25,7 +25,7 @@ ultima_mensagem_boas_vindas = None
 # ============================================
 
 ultimo_alerta_enviado = None
-INTERVALO_MINIMO_ALERTA = 28800  # 1 hora em segundos
+INTERVALO_MINIMO_ALERTA = 3600  # 1 hora em segundos
 
 # ============================================
 # AJUSTE DE FUSO HORÁRIO (Brasília UTC-3)
@@ -621,7 +621,7 @@ def gerar_alertas_meteorologicos():
         return f"❌ Erro ao gerar alertas: {e}"
 
 # ============================================
-# 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
+# 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS 
 # ============================================
 
 async def verificar_e_enviar_alertas():
@@ -636,12 +636,22 @@ async def verificar_e_enviar_alertas():
         if "✅ TEMPO ESTÁVEL!" in alerta:
             return
         
-        # Verifica se já passou tempo suficiente desde o último alerta
+        # 🔧 CORREÇÃO: Verifica se já passou tempo suficiente desde o último alerta
         if ultimo_alerta_enviado is not None:
             tempo_decorrido = time.time() - ultimo_alerta_enviado
+            print(f"⏳ Último alerta enviado há {tempo_decorrido/3600:.1f} horas. Aguardando {INTERVALO_MINIMO_ALERTA/3600:.0f}h.")
             if tempo_decorrido < INTERVALO_MINIMO_ALERTA:
-                print(f"⏳ Último alerta enviado há {tempo_decorrido:.0f}s. Aguardando {INTERVALO_MINIMO_ALERTA}s.")
-                return
+                return  # 🔧 NÃO ENVIA O ALERTA!
+        
+        # 🔧 CORREÇÃO: Verifica se o alerta é IDÊNTICO ao último enviado
+        # Guarda o hash do alerta para comparar
+        if not hasattr(verificar_e_enviar_alertas, "ultimo_alerta_texto"):
+            verificar_e_enviar_alertas.ultimo_alerta_texto = ""
+        
+        # Se o alerta for igual ao último, não envia (evita repetição)
+        if alerta == verificar_e_enviar_alertas.ultimo_alerta_texto:
+            print("⏳ Alerta idêntico ao último. Não será reenviado.")
+            return
         
         # Envia o alerta no grupo
         await bot_application.bot.send_message(
@@ -650,13 +660,13 @@ async def verificar_e_enviar_alertas():
             parse_mode="HTML"
         )
         
-        # Atualiza o timestamp do último alerta
+        # 🔧 CORREÇÃO: Atualiza o timestamp e salva o texto do alerta
         ultimo_alerta_enviado = time.time()
+        verificar_e_enviar_alertas.ultimo_alerta_texto = alerta
         print(f"🚨 Alerta meteorológico enviado automaticamente às {agora_str()}")
         
     except Exception as e:
         print(f"❌ Erro ao verificar/enviar alertas: {e}")
-
 # ============================================
 # FUNÇÃO: GERAR RELATÓRIO EM TEXTO
 # ============================================
@@ -714,32 +724,63 @@ def gerar_relatorio_tempo_real(dados):
 📈 Tendência: {tendencia}"""
 
 # ============================================
-# FUNÇÃO: GERAR GRÁFICO (USANDO MATPLOTLIB)
+# FUNÇÃO: GERAR GRÁFICO (USANDO MATPLOTLIB) - CORRIGIDA
 # ============================================
 
 def gerar_grafico_diario(dados):
     """Gera gráfico com 4 painéis usando matplotlib"""
     try:
+        # 🔧 CORREÇÃO: Importa matplotlib APENAS UMA VEZ
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         import io
+        from datetime import datetime as dt
         
+        # Verifica se há dados suficientes
         if not dados or len(dados) < 2:
-            return None, "Dados insuficientes para gerar gráfico."
+            print(f"⚠️ Dados insuficientes: {len(dados) if dados else 0} registros")
+            return None, "Dados insuficientes para gerar gráfico (mínimo 2 registros)."
         
-        # Prepara os dados
+        # 🔧 CORREÇÃO: Limita o número de pontos para evitar travamentos
+        if len(dados) > 100:
+            dados = dados[-100:]  # Pega apenas os últimos 100 registros
+            print(f"📊 Limitado a 100 registros para o gráfico")
+        
+        # Prepara os dados com tratamento de erros
         indices = list(range(len(dados)))
-        horas = [datetime.fromtimestamp(d['timestamp']).strftime('%H:%M') for d in dados]
-        pm25 = [d['pm25'] for d in dados]
-        pm10 = [d['pm10'] for d in dados]
-        temp = [d['temp'] for d in dados]
-        umid = [d['umid'] for d in dados]
+        horas = []
+        pm25 = []
+        pm10 = []
+        temp = []
+        umid = []
+        
+        for d in dados:
+            try:
+                # 🔧 CORREÇÃO: Tratamento de timestamp inválido
+                timestamp = d.get('timestamp', 0)
+                if timestamp > 0:
+                    horas.append(dt.fromtimestamp(timestamp).strftime('%H:%M'))
+                else:
+                    horas.append("--:--")
+                
+                pm25.append(float(d.get('pm25', 0)))
+                pm10.append(float(d.get('pm10', 0)))
+                temp.append(float(d.get('temp', 0)))
+                umid.append(float(d.get('umid', 0)))
+            except Exception as e:
+                print(f"⚠️ Erro ao processar registro: {e}")
+                # Adiciona valores padrão
+                horas.append("--:--")
+                pm25.append(0)
+                pm10.append(0)
+                temp.append(0)
+                umid.append(0)
         
         # Calcula estatísticas
         media_pm25 = sum(pm25) / len(pm25) if pm25 else 0
         max_pm25 = max(pm25) if pm25 else 0
-        max_pm25_hora = horas[pm25.index(max_pm25)] if pm25 else "--:--"
+        max_pm25_hora = horas[pm25.index(max_pm25)] if pm25 and max_pm25 > 0 else "--:--"
         min_pm25 = min(pm25) if pm25 else 0
         classificacao = classificar_ar(media_pm25)
         emoji = get_emoji_classificacao(media_pm25)
@@ -752,52 +793,60 @@ def gerar_grafico_diario(dados):
         ax1.plot(indices, pm25, 'o-', color='darkblue', linewidth=1.5, markersize=3, label='Tendência')
         ax1.axhline(y=media_pm25, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm25:.1f}')
         ax1.axhline(y=25, color='orange', linestyle=':', alpha=0.7, label='Limite (25)')
-        ax1.set_xlabel('Medições (últimas 24h)', fontsize=10)
+        ax1.set_xlabel('Medições', fontsize=10)
         ax1.set_ylabel('PM2.5 (µg/m³)', fontsize=10)
-        ax1.set_title(f'PM2.5 - Média: {media_pm25:.1f} | Máx: {max_pm25:.1f} ({max_pm25_hora})', fontsize=11)
+        ax1.set_title(f'PM2.5 - Média: {media_pm25:.1f} | Máx: {max_pm25:.1f}', fontsize=11)
         ax1.legend(fontsize=8, loc='upper right')
         ax1.grid(True, alpha=0.3)
-        ax1.set_xticks(indices[::max(1, len(indices)//10)])
-        ax1.set_xticklabels(horas[::max(1, len(indices)//10)], rotation=45, ha='right', fontsize=7)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax1.set_xticks(indices[::step])
+            ax1.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
         
         # PM10
         ax2.bar(indices, pm10, color='#ff7f0e', alpha=0.7, width=0.6, label='PM10')
         ax2.plot(indices, pm10, 's-', color='darkred', linewidth=1.5, markersize=3, label='Tendência')
         media_pm10 = sum(pm10)/len(pm10) if pm10 else 0
         ax2.axhline(y=media_pm10, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm10:.1f}')
-        ax2.set_xlabel('Medições (últimas 24h)', fontsize=10)
+        ax2.set_xlabel('Medições', fontsize=10)
         ax2.set_ylabel('PM10 (µg/m³)', fontsize=10)
         ax2.set_title(f'PM10 - Média: {media_pm10:.1f}', fontsize=11)
         ax2.legend(fontsize=8, loc='upper right')
         ax2.grid(True, alpha=0.3)
-        ax2.set_xticks(indices[::max(1, len(indices)//10)])
-        ax2.set_xticklabels(horas[::max(1, len(indices)//10)], rotation=45, ha='right', fontsize=7)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax2.set_xticks(indices[::step])
+            ax2.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
         
         # Temperatura
         ax3.plot(indices, temp, 'o-', color='#2ca02c', linewidth=2, markersize=4, label='Temperatura')
         ax3.fill_between(indices, temp, alpha=0.2, color='#2ca02c')
         media_temp = sum(temp)/len(temp) if temp else 0
         ax3.axhline(y=media_temp, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_temp:.1f}°C')
-        ax3.set_xlabel('Medições (últimas 24h)', fontsize=10)
+        ax3.set_xlabel('Medições', fontsize=10)
         ax3.set_ylabel('Temperatura (°C)', fontsize=10)
         ax3.set_title(f'Temperatura - Média: {media_temp:.1f}°C', fontsize=11)
         ax3.legend(fontsize=8, loc='upper right')
         ax3.grid(True, alpha=0.3)
-        ax3.set_xticks(indices[::max(1, len(indices)//10)])
-        ax3.set_xticklabels(horas[::max(1, len(indices)//10)], rotation=45, ha='right', fontsize=7)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax3.set_xticks(indices[::step])
+            ax3.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
         
         # Umidade
         ax4.plot(indices, umid, 's-', color='#9467bd', linewidth=2, markersize=4, label='Umidade')
         ax4.fill_between(indices, umid, alpha=0.2, color='#9467bd')
         media_umid = sum(umid)/len(umid) if umid else 0
         ax4.axhline(y=media_umid, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_umid:.0f}%')
-        ax4.set_xlabel('Medições (últimas 24h)', fontsize=10)
+        ax4.set_xlabel('Medições', fontsize=10)
         ax4.set_ylabel('Umidade (%)', fontsize=10)
         ax4.set_title(f'Umidade - Média: {media_umid:.0f}%', fontsize=11)
         ax4.legend(fontsize=8, loc='upper right')
         ax4.grid(True, alpha=0.3)
-        ax4.set_xticks(indices[::max(1, len(indices)//10)])
-        ax4.set_xticklabels(horas[::max(1, len(indices)//10)], rotation=45, ha='right', fontsize=7)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax4.set_xticks(indices[::step])
+            ax4.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
         
         # Título geral
         data_str = hoje_str()
@@ -807,9 +856,9 @@ def gerar_grafico_diario(dados):
         
         # Salva em memória
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
         buf.seek(0)
-        plt.close()
+        plt.close(fig)  # 🔧 Fecha a figura para liberar memória
         
         # Gera relatório em texto
         relatorio = f"""📈 RELATÓRIO DIÁRIO COMPLETO
@@ -817,7 +866,7 @@ def gerar_grafico_diario(dados):
 ━━━━━━━━━━━━━━━━━━━━━━
 📊 Estatísticas do dia:
    Média PM2.5: {media_pm25:.1f} µg/m³
-   Máximo PM2.5: {max_pm25:.1f} µg/m³ ({max_pm25_hora})
+   Máximo PM2.5: {max_pm25:.1f} µg/m³
    Mínimo PM2.5: {min_pm25:.1f} µg/m³
    Classificação: {emoji} {classificacao}
 
@@ -829,11 +878,13 @@ def gerar_grafico_diario(dados):
         
         return buf, relatorio
         
-    except ImportError:
-        print("⚠️ Matplotlib não instalado. Gráfico não gerado.")
+    except ImportError as e:
+        print(f"⚠️ Matplotlib não instalado: {e}")
         return None, "Biblioteca matplotlib não disponível."
     except Exception as e:
         print(f"❌ Erro ao gerar gráfico: {e}")
+        import traceback
+        traceback.print_exc()
         return None, f"Erro ao gerar gráfico: {e}"
 
 # ============================================
