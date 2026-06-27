@@ -749,11 +749,9 @@ def gerar_relatorio_tempo_real(dados):
 # ============================================
 
 def gerar_grafico_diario(dados):
-    """Gera gráfico com 4 painéis usando matplotlib - VERSÃO SEGURA"""
+    """Gera gráfico com 4 painéis usando matplotlib - VERSÃO FINAL"""
     
-    # 🔧 Importa matplotlib APENAS UMA VEZ no início do arquivo
-    # 🔧 CORREÇÃO: Se não estiver importado globalmente, importa aqui com try/except
-    
+    # 🔧 Importa matplotlib de forma segura
     try:
         import matplotlib
         matplotlib.use('Agg')
@@ -762,185 +760,135 @@ def gerar_grafico_diario(dados):
         from datetime import datetime as dt
     except ImportError as e:
         print(f"❌ Matplotlib não disponível: {e}")
-        return None, "Biblioteca matplotlib não disponível."
+        return None, "Biblioteca matplotlib não disponível. Instale com: pip install matplotlib"
+
+    # 🔧 Funções auxiliares (fallback se não existirem no escopo global)
+    def _classificar(pm25):
+        if pm25 <= 15: return "BOA"
+        elif pm25 <= 25: return "MODERADA"
+        elif pm25 <= 50: return "RUIM"
+        elif pm25 <= 100: return "MUITO RUIM"
+        else: return "PÉSSIMA"
     
+    def _emoji(pm25):
+        if pm25 <= 15: return "🟢"
+        elif pm25 <= 25: return "🟡"
+        elif pm25 <= 50: return "🟠"
+        elif pm25 <= 100: return "🔴"
+        else: return "⚫"
+    
+    # Tenta usar funções globais se existirem
+    classificar_ar_func = globals().get('classificar_ar', _classificar)
+    get_emoji_func = globals().get('get_emoji_classificacao', _emoji)
+    hoje_str_func = globals().get('hoje_str', lambda: dt.now().strftime("%d/%m/%Y"))
+    agora_str_func = globals().get('agora_str', lambda: dt.now().strftime("%H:%M"))
+
     try:
-        # 🔧 VALIDAÇÃO RÁPIDA
+        # 🔧 VALIDAÇÃO
         if not dados or len(dados) < 2:
-            print(f"⚠️ Dados insuficientes: {len(dados) if dados else 0} registros")
-            return None, "Dados insuficientes para gerar gráfico (mínimo 2 registros)."
-        
-        # 🔧 LIMITA O NÚMERO DE PONTOS
-        if len(dados) > 100:
-            dados = dados[-100:]
-            print(f"📊 Limitado a 100 registros para o gráfico")
-        
-        # 🔧 PREPARA OS DADOS DE FORMA SEGURA
-        indices = []
-        horas = []
-        pm25 = []
-        pm10 = []
-        temp = []
-        umid = []
+            return None, f"Dados insuficientes: {len(dados) if dados else 0} registros (mínimo 2)."
+
+        # 🔧 LIMITA DADOS
+        dados = dados[-100:] if len(dados) > 100 else dados
+
+        # 🔧 PROCESSAMENTO
+        indices, horas, pm25, pm10, temp, umid = [], [], [], [], [], []
         
         for idx, d in enumerate(dados):
-            try:
-                # 🔧 VERIFICA SE É UM DICIONÁRIO VÁLIDO
-                if not isinstance(d, dict):
-                    print(f"⚠️ Registro {idx} não é um dicionário: {type(d)}")
-                    continue
-                
-                # 🔧 TIMESTAMP SEGURO
-                ts = d.get('timestamp', 0)
-                if isinstance(ts, (int, float)) and ts > 0:
-                    try:
-                        hora = dt.fromtimestamp(ts).strftime('%H:%M')
-                    except (ValueError, OSError, OverflowError) as e:
-                        print(f"⚠️ Erro no timestamp {ts}: {e}")
-                        hora = "--:--"
-                else:
-                    hora = "--:--"
-                
-                # 🔧 VALORES NUMÉRICOS SEGUROS
-                pm25_val = float(d.get('pm25', 0)) if d.get('pm25') is not None else 0
-                pm10_val = float(d.get('pm10', 0)) if d.get('pm10') is not None else 0
-                temp_val = float(d.get('temp', 0)) if d.get('temp') is not None else 0
-                umid_val = float(d.get('umid', 0)) if d.get('umid') is not None else 0
-                
-                indices.append(idx)
-                horas.append(hora)
-                pm25.append(pm25_val)
-                pm10.append(pm10_val)
-                temp.append(temp_val)
-                umid.append(umid_val)
-                
-            except Exception as e:
-                print(f"⚠️ Erro ao processar registro {idx}: {e}")
-                # Pula este registro em vez de adicionar valores padrão
+            if not isinstance(d, dict):
                 continue
-        
-        # 🔧 VERIFICA SE HÁ DADOS SUFICIENTES
+            
+            ts = d.get('timestamp', 0)
+            hora = dt.fromtimestamp(ts).strftime('%H:%M') if isinstance(ts, (int, float)) and ts > 0 else "--:--"
+            
+            pm25.append(float(d.get('pm25') or 0))
+            pm10.append(float(d.get('pm10') or 0))
+            temp.append(float(d.get('temp') or 0))
+            umid.append(float(d.get('umid') or 0))
+            indices.append(idx)
+            horas.append(hora)
+
         if len(pm25) < 2:
-            print(f"❌ Dados insuficientes após processamento: {len(pm25)} registros")
             return None, f"Dados insuficientes após processamento: {len(pm25)} registros."
+
+        # 🔧 ESTATÍSTICAS
+        media_pm25 = sum(pm25) / len(pm25)
+        max_pm25 = max(pm25)
+        min_pm25 = min(pm25)
+        max_idx = pm25.index(max_pm25)
+        max_pm25_hora = horas[max_idx] if max_idx < len(horas) else "--:--"
         
-        # 🔧 CALCULA ESTATÍSTICAS
-        try:
-            media_pm25 = sum(pm25) / len(pm25)
-            max_pm25 = max(pm25)
-            min_pm25 = min(pm25)
-            max_idx = pm25.index(max_pm25)
-            max_pm25_hora = horas[max_idx] if max_idx < len(horas) else "--:--"
-        except Exception as e:
-            print(f"⚠️ Erro ao calcular estatísticas: {e}")
-            media_pm25 = 0
-            max_pm25 = 0
-            min_pm25 = 0
-            max_pm25_hora = "--:--"
-        
-        classificacao = classificar_ar(media_pm25)
-        emoji = get_emoji_classificacao(media_pm25)
-        
-        # 🔧 CRIA O GRÁFICO DE FORMA SEGURA
-        try:
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-        except Exception as e:
-            print(f"❌ Erro ao criar subplots: {e}")
-            return None, f"Erro ao criar gráfico: {e}"
-        
-        # 🔧 PM2.5
-        try:
-            ax1.bar(indices, pm25, color='#1f77b4', alpha=0.7, width=0.6, label='PM2.5')
-            ax1.plot(indices, pm25, 'o-', color='darkblue', linewidth=1.5, markersize=3, label='Tendência')
-            ax1.axhline(y=media_pm25, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm25:.1f}')
-            ax1.axhline(y=25, color='orange', linestyle=':', alpha=0.7, label='Limite (25)')
-            ax1.set_xlabel('Medições', fontsize=10)
-            ax1.set_ylabel('PM2.5 (µg/m³)', fontsize=10)
-            ax1.set_title(f'PM2.5 - Média: {media_pm25:.1f} | Máx: {max_pm25:.1f}', fontsize=11)
-            ax1.legend(fontsize=8, loc='upper right')
-            ax1.grid(True, alpha=0.3)
-            if len(horas) > 0:
-                step = max(1, len(horas)//10)
-                ax1.set_xticks(indices[::step])
-                ax1.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-        except Exception as e:
-            print(f"⚠️ Erro no gráfico PM2.5: {e}")
-        
-        # 🔧 PM10
-        try:
-            media_pm10 = sum(pm10)/len(pm10) if pm10 else 0
-            ax2.bar(indices, pm10, color='#ff7f0e', alpha=0.7, width=0.6, label='PM10')
-            ax2.plot(indices, pm10, 's-', color='darkred', linewidth=1.5, markersize=3, label='Tendência')
-            ax2.axhline(y=media_pm10, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm10:.1f}')
-            ax2.set_xlabel('Medições', fontsize=10)
-            ax2.set_ylabel('PM10 (µg/m³)', fontsize=10)
-            ax2.set_title(f'PM10 - Média: {media_pm10:.1f}', fontsize=11)
-            ax2.legend(fontsize=8, loc='upper right')
-            ax2.grid(True, alpha=0.3)
-            if len(horas) > 0:
-                step = max(1, len(horas)//10)
-                ax2.set_xticks(indices[::step])
-                ax2.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-        except Exception as e:
-            print(f"⚠️ Erro no gráfico PM10: {e}")
-        
-        # 🔧 Temperatura
-        try:
-            media_temp = sum(temp)/len(temp) if temp else 0
-            ax3.plot(indices, temp, 'o-', color='#2ca02c', linewidth=2, markersize=4, label='Temperatura')
-            ax3.fill_between(indices, temp, alpha=0.2, color='#2ca02c')
-            ax3.axhline(y=media_temp, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_temp:.1f}°C')
-            ax3.set_xlabel('Medições', fontsize=10)
-            ax3.set_ylabel('Temperatura (°C)', fontsize=10)
-            ax3.set_title(f'Temperatura - Média: {media_temp:.1f}°C', fontsize=11)
-            ax3.legend(fontsize=8, loc='upper right')
-            ax3.grid(True, alpha=0.3)
-            if len(horas) > 0:
-                step = max(1, len(horas)//10)
-                ax3.set_xticks(indices[::step])
-                ax3.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-        except Exception as e:
-            print(f"⚠️ Erro no gráfico Temperatura: {e}")
-        
-        # 🔧 Umidade
-        try:
-            media_umid = sum(umid)/len(umid) if umid else 0
-            ax4.plot(indices, umid, 's-', color='#9467bd', linewidth=2, markersize=4, label='Umidade')
-            ax4.fill_between(indices, umid, alpha=0.2, color='#9467bd')
-            ax4.axhline(y=media_umid, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_umid:.0f}%')
-            ax4.set_xlabel('Medições', fontsize=10)
-            ax4.set_ylabel('Umidade (%)', fontsize=10)
-            ax4.set_title(f'Umidade - Média: {media_umid:.0f}%', fontsize=11)
-            ax4.legend(fontsize=8, loc='upper right')
-            ax4.grid(True, alpha=0.3)
-            if len(horas) > 0:
-                step = max(1, len(horas)//10)
-                ax4.set_xticks(indices[::step])
-                ax4.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-        except Exception as e:
-            print(f"⚠️ Erro no gráfico Umidade: {e}")
-        
-        # 🔧 Título geral
-        data_str = hoje_str()
-        fig.suptitle(f'Qualidade do Ar - {data_str} | Classificação: {classificacao}', fontsize=14, fontweight='bold')
-        
+        classificacao = classificar_ar_func(media_pm25)
+        emoji = get_emoji_func(media_pm25)
+
+        # 🔧 GRÁFICO
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+
+        # PM2.5
+        ax1.bar(indices, pm25, color='#1f77b4', alpha=0.7, width=0.6, label='PM2.5')
+        ax1.plot(indices, pm25, 'o-', color='darkblue', linewidth=1.5, markersize=3, label='Tendência')
+        ax1.axhline(y=media_pm25, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm25:.1f}')
+        ax1.set_title(f'PM2.5 - Média: {media_pm25:.1f} | Máx: {max_pm25:.1f} @ {max_pm25_hora}')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax1.set_xticks(indices[::step])
+            ax1.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
+
+        # PM10
+        media_pm10 = sum(pm10) / len(pm10) if pm10 else 0
+        ax2.bar(indices, pm10, color='#ff7f0e', alpha=0.7, width=0.6, label='PM10')
+        ax2.plot(indices, pm10, 's-', color='darkred', linewidth=1.5, markersize=3, label='Tendência')
+        ax2.axhline(y=media_pm10, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm10:.1f}')
+        ax2.set_title(f'PM10 - Média: {media_pm10:.1f}')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax2.set_xticks(indices[::step])
+            ax2.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
+
+        # Temperatura
+        media_temp = sum(temp) / len(temp) if temp else 0
+        ax3.plot(indices, temp, 'o-', color='#2ca02c', linewidth=2, markersize=4, label='Temperatura')
+        ax3.fill_between(indices, temp, alpha=0.2, color='#2ca02c')
+        ax3.axhline(y=media_temp, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_temp:.1f}°C')
+        ax3.set_title(f'Temperatura - Média: {media_temp:.1f}°C')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax3.set_xticks(indices[::step])
+            ax3.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
+
+        # Umidade
+        media_umid = sum(umid) / len(umid) if umid else 0
+        ax4.plot(indices, umid, 's-', color='#9467bd', linewidth=2, markersize=4, label='Umidade')
+        ax4.fill_between(indices, umid, alpha=0.2, color='#9467bd')
+        ax4.axhline(y=media_umid, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_umid:.0f}%')
+        ax4.set_title(f'Umidade - Média: {media_umid:.0f}%')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+        if len(horas) > 0:
+            step = max(1, len(horas)//10)
+            ax4.set_xticks(indices[::step])
+            ax4.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
+
+        data_str = hoje_str_func()
+        fig.suptitle(f'📊 Qualidade do Ar - {data_str} | Classificação: {emoji} {classificacao}', fontsize=14, fontweight='bold')
         plt.tight_layout()
-        
-        # 🔧 SALVA O GRÁFICO
-        try:
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            buf.seek(0)
-            plt.close(fig)
-        except Exception as e:
-            print(f"❌ Erro ao salvar gráfico: {e}")
-            return None, f"Erro ao salvar gráfico: {e}"
-        
-        # 🔧 GERA RELATÓRIO
-        try:
-            dados_finais = dados[-1] if dados else {}
-            relatorio = f"""📈 RELATÓRIO DIÁRIO COMPLETO
-🕐 {agora_str()} - {data_str}
+
+        # 🔧 SALVA
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+
+        # 🔧 RELATÓRIO
+        dados_finais = dados[-1] if dados else {}
+        relatorio = f"""📈 RELATÓRIO DIÁRIO COMPLETO
+🕐 {agora_str_func()} - {data_str}
 ━━━━━━━━━━━━━━━━━━━━━━
 📊 Estatísticas do dia:
    Média PM2.5: {media_pm25:.1f} µg/m³
@@ -953,15 +901,13 @@ def gerar_grafico_diario(dados):
    Umidade: {dados_finais.get('umid', 0):.0f}%
    Pressão: {dados_finais.get('pressao', 0):.0f} hPa
    VOC: {dados_finais.get('voc', 0)}"""
-        except Exception as e:
-            print(f"⚠️ Erro ao gerar relatório: {e}")
-            relatorio = "📈 Relatório Diário - Consulte o gráfico acima."
-        
+
+        print(f"✅ Gráfico gerado com sucesso! {len(pm25)} pontos")
         return buf, relatorio
-        
+
     except Exception as e:
-        print(f"❌ Erro ao gerar gráfico: {e}")
         import traceback
+        print(f"❌ Erro ao gerar gráfico: {e}")
         traceback.print_exc()
         return None, f"Erro ao gerar gráfico: {e}"
 
