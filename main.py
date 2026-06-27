@@ -25,7 +25,9 @@ ultima_mensagem_boas_vindas = None
 # ============================================
 
 ultimo_alerta_enviado = None
-INTERVALO_MINIMO_ALERTA = 3600  # 1 hora em segundos
+ultimo_alerta_texto = ""
+ultimo_alerta_timestamp = 0
+INTERVALO_REENVIO_ALERTA = 21600  # 6 horas em segundos
 
 # ============================================
 # AJUSTE DE FUSO HORÁRIO (Brasília UTC-3)
@@ -626,7 +628,7 @@ def gerar_alertas_meteorologicos():
 
 async def verificar_e_enviar_alertas():
     """Verifica se há alertas meteorológicos e envia automaticamente no grupo"""
-    global ultimo_alerta_enviado
+    global ultimo_alerta_enviado, ultimo_alerta_texto, ultimo_alerta_timestamp
     
     try:
         # Gera os alertas
@@ -634,39 +636,58 @@ async def verificar_e_enviar_alertas():
         
         # Se não houver alerta (tempo estável), não faz nada
         if "✅ TEMPO ESTÁVEL!" in alerta:
+            # Reseta o timestamp do último alerta quando o tempo estabiliza
+            # Isso evita que um alerta antigo seja reenviado depois
+            if ultimo_alerta_enviado is not None:
+                print("✅ Tempo estabilizado. Resetando controle de alertas.")
+                ultimo_alerta_enviado = None
+                ultimo_alerta_texto = ""
             return
         
-        # 🔧 CORREÇÃO: Verifica se já passou tempo suficiente desde o último alerta
-        if ultimo_alerta_enviado is not None:
-            tempo_decorrido = time.time() - ultimo_alerta_enviado
-            print(f"⏳ Último alerta enviado há {tempo_decorrido/3600:.1f} horas. Aguardando {INTERVALO_MINIMO_ALERTA/3600:.0f}h.")
-            if tempo_decorrido < INTERVALO_MINIMO_ALERTA:
-                return  # 🔧 NÃO ENVIA O ALERTA!
+        # 🔧 REGRA 1: Verifica se o alerta é IGUAL ao último enviado
+        if alerta == ultimo_alerta_texto:
+            # É igual! Verifica se já passou 6 horas
+            if ultimo_alerta_timestamp > 0:
+                tempo_decorrido = time.time() - ultimo_alerta_timestamp
+                horas_decorridas = tempo_decorrido / 3600
+                
+                print(f"⏳ Alerta IGUAL ao último. Último enviado há {horas_decorridas:.1f} horas.")
+                
+                # 🔧 REGRA 2: Se passou 6 horas, reenvia (mesmo sendo igual)
+                if tempo_decorrido >= INTERVALO_REENVIO_ALERTA:
+                    print(f"🔄 Passaram 6 horas desde o último alerta igual. Reenviando...")
+                    # Envia o alerta
+                    await bot_application.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=alerta + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Este alerta já havia sido enviado anteriormente.",
+                        parse_mode="HTML"
+                    )
+                    # Atualiza o timestamp (reset da contagem)
+                    ultimo_alerta_timestamp = time.time()
+                    print(f"🚨 Alerta reenviado (após 6h) às {agora_str()}")
+                    return
+                else:
+                    # Ainda não passou 6 horas, NÃO ENVIA
+                    faltam = INTERVALO_REENVIO_ALERTA - tempo_decorrido
+                    print(f"⏳ Aguardando {faltam/3600:.1f} horas para reenviar.")
+                    return
         
-        # 🔧 CORREÇÃO: Verifica se o alerta é IDÊNTICO ao último enviado
-        # Guarda o hash do alerta para comparar
-        if not hasattr(verificar_e_enviar_alertas, "ultimo_alerta_texto"):
-            verificar_e_enviar_alertas.ultimo_alerta_texto = ""
-        
-        # Se o alerta for igual ao último, não envia (evita repetição)
-        if alerta == verificar_e_enviar_alertas.ultimo_alerta_texto:
-            print("⏳ Alerta idêntico ao último. Não será reenviado.")
-            return
-        
-        # Envia o alerta no grupo
+        # 🔧 ALERTA NOVO! Envia imediatamente
         await bot_application.bot.send_message(
             chat_id=CHAT_ID,
             text=alerta,
             parse_mode="HTML"
         )
         
-        # 🔧 CORREÇÃO: Atualiza o timestamp e salva o texto do alerta
+        # Atualiza as variáveis de controle
         ultimo_alerta_enviado = time.time()
-        verificar_e_enviar_alertas.ultimo_alerta_texto = alerta
-        print(f"🚨 Alerta meteorológico enviado automaticamente às {agora_str()}")
+        ultimo_alerta_texto = alerta
+        ultimo_alerta_timestamp = time.time()
+        print(f"🚨 NOVO alerta meteorológico enviado às {agora_str()}")
         
     except Exception as e:
         print(f"❌ Erro ao verificar/enviar alertas: {e}")
+        
 # ============================================
 # FUNÇÃO: GERAR RELATÓRIO EM TEXTO
 # ============================================
