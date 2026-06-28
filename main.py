@@ -138,20 +138,25 @@ def get_emoji_classificacao(pm25):
 # FUNÇÃO: PREVISÃO DO TEMPO VIA OPEN-METEO
 # ============================================
 
+# ============================================
+# FUNÇÃO: PREVISÃO DO TEMPO VIA OPEN-METEO
+# ============================================
 def obter_previsao_tempo():
+    print(f"🌤️ Buscando previsão Open-Meteo para {LATITUDE}, {LONGITUDE}...")
     try:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=4"
-        
+       
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"❌ Erro na Open-Meteo: {response.status_code}")
+            print(f"❌ Erro na Open-Meteo: Status {response.status_code}")
             return None
-        
+       
         dados = response.json()
-        
+        print("✅ Previsão Open-Meteo obtida com sucesso!")
+       
         current = dados.get('current', {})
         daily = dados.get('daily', {})
-        
+       
         weather_codes = {
             0: "☀️ Céu limpo", 1: "🌤️ Principalmente limpo", 2: "⛅ Parcialmente nublado",
             3: "☁️ Nublado", 45: "🌫️ Neblina", 48: "🌫️ Neblina com geada",
@@ -161,21 +166,21 @@ def obter_previsao_tempo():
             80: "⛈️ Pancadas de chuva", 81: "⛈️ Pancadas moderadas", 82: "⛈️ Pancadas fortes",
             95: "⛈️ Trovoada", 96: "⛈️ Trovoada com granizo", 99: "⛈️ Trovoada com granizo forte"
         }
-        
+       
         weather_code = current.get('weather_code', 0)
         current_weather = weather_codes.get(weather_code, "❓ Desconhecido")
-        
+       
         dias_semana = {0: "Segunda-feira", 1: "Terça-feira", 2: "Quarta-feira", 3: "Quinta-feira", 4: "Sexta-feira", 5: "Sábado", 6: "Domingo"}
-        
+       
         hoje = data_iso()
         previsao_hoje = {}
         previsao_proximos_dias = []
-        
+       
         if 'time' in daily and len(daily['time']) >= 4:
             for i, data in enumerate(daily['time']):
                 data_obj = datetime.strptime(data, '%Y-%m-%d')
                 dia_semana = dias_semana[data_obj.weekday()]
-                
+               
                 previsao_dia = {
                     'data': data,
                     'dia_semana': dia_semana,
@@ -186,12 +191,12 @@ def obter_previsao_tempo():
                     'nascer_sol': daily['sunrise'][i].split('T')[1] if 'sunrise' in daily else '',
                     'por_sol': daily['sunset'][i].split('T')[1] if 'sunset' in daily else ''
                 }
-                
+               
                 if data == hoje:
                     previsao_hoje = previsao_dia
                 else:
                     previsao_proximos_dias.append(previsao_dia)
-        
+       
         return {
             'atual': {
                 'temp': current.get('temperature_2m', 0),
@@ -205,7 +210,7 @@ def obter_previsao_tempo():
             'hoje': previsao_hoje,
             'proximos_dias': previsao_proximos_dias[:3]
         }
-        
+       
     except Exception as e:
         print(f"❌ Erro na Open-Meteo: {e}")
         return None
@@ -499,15 +504,17 @@ def gerar_alertas_meteorologicos():
 # ============================================
 # 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
 # ============================================
-
 async def verificar_e_enviar_alertas():
     """Verifica e envia alertas meteorológicos com cooldown correto"""
     global ultimo_alerta_enviado, ultimo_alerta_texto, ultimo_alerta_timestamp
-
     try:
         alerta = gerar_alertas_meteorologicos()
 
-        # Se for tempo estável, reseta o controle
+        # Bloqueia envio se previsão estiver indisponível ou tempo estável
+        if "Previsão do tempo indisponível" in alerta:
+            print("⚠️ Previsão Open-Meteo indisponível. Aguardando próxima verificação...")
+            return
+
         if "✅ TEMPO ESTÁVEL!" in alerta:
             if ultimo_alerta_enviado is not None:
                 print("✅ Tempo estabilizado. Resetando controle de alertas.")
@@ -516,8 +523,8 @@ async def verificar_e_enviar_alertas():
                 ultimo_alerta_timestamp = 0
             return
 
-        # Se não houver dados do sensor, não envia alerta
-        if "⚠️ Dados do sensor indisponíveis" in alerta:
+        # Se não houver dados do sensor
+        if "Dados do sensor indisponíveis" in alerta:
             print("⚠️ Dados do sensor indisponíveis. Aguardando...")
             return
 
@@ -532,11 +539,6 @@ async def verificar_e_enviar_alertas():
                 return
             else:
                 print(f"🔄 Passaram 6 horas. Reenviando alerta igual...")
-
-        # Verifica se o bot_application está pronto antes de enviar
-        if bot_application is None or not hasattr(bot_application, 'bot'):
-            print("⚠️ Bot Application não está pronto. Aguardando...")
-            return
 
         # ALERTA NOVO OU APÓS 6h - ENVIA
         await bot_application.bot.send_message(
