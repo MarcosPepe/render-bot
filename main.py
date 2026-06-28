@@ -5,7 +5,7 @@ import base64
 import requests
 import threading
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import firebase_admin
 from firebase_admin import credentials, db
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -39,10 +39,9 @@ try:
 except AttributeError:
     pass
 
-# Funções de horário
+# Funções de horário usando timezone-aware
 def hora_brasilia():
-    agora_utc = datetime.utcnow()
-    return agora_utc - timedelta(hours=3)
+    return datetime.now(timezone(timedelta(hours=-3)))
 
 def agora_str():
     return hora_brasilia().strftime("%H:%M")
@@ -62,9 +61,9 @@ CHAT_ID = os.environ.get("CHAT_ID")
 FIREBASE_CRED_JSON = os.environ.get("FIREBASE_CRED_JSON")
 FIREBASE_URL = "https://qualidade-do-ar-tcc-default-rtdb.firebaseio.com/"
 
-# Coordenadas da sua cidade (substitua pelas suas)
-LATITUDE = -22.0739   # ← Substitua pela sua latitude
-LONGITUDE = -48.7403  # ← Substitua pela sua longitude
+# Coordenadas da sua cidade
+LATITUDE = -22.0739
+LONGITUDE = -48.7403
 
 # Horários dos relatórios
 HORARIOS_REPORT = ["07:00", "12:00", "15:00", "19:00"]
@@ -140,12 +139,7 @@ def get_emoji_classificacao(pm25):
 # ============================================
 
 def obter_previsao_tempo():
-    """
-    Busca previsão do tempo para sua localização via Open-Meteo API
-    Agora com previsão para 3 dias
-    """
     try:
-        # Mudamos forecast_days para 4 (hoje + 3 dias)
         url = f"https://api.open-meteo.com/v1/forecast?latitude={LATITUDE}&longitude={LONGITUDE}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset&timezone=America/Sao_Paulo&forecast_days=4"
         
         response = requests.get(url, timeout=10)
@@ -155,57 +149,30 @@ def obter_previsao_tempo():
         
         dados = response.json()
         
-        # Pega dados atuais
         current = dados.get('current', {})
         daily = dados.get('daily', {})
         
-        # Código de clima (weather_code)
         weather_codes = {
-            0: "☀️ Céu limpo",
-            1: "🌤️ Principalmente limpo",
-            2: "⛅ Parcialmente nublado",
-            3: "☁️ Nublado",
-            45: "🌫️ Neblina",
-            48: "🌫️ Neblina com geada",
-            51: "🌧️ Garoa leve",
-            53: "🌧️ Garoa moderada",
-            55: "🌧️ Garoa densa",
-            61: "🌧️ Chuva leve",
-            63: "🌧️ Chuva moderada",
-            65: "🌧️ Chuva forte",
-            71: "❄️ Neve leve",
-            73: "❄️ Neve moderada",
-            75: "❄️ Neve forte",
-            80: "⛈️ Pancadas de chuva",
-            81: "⛈️ Pancadas moderadas",
-            82: "⛈️ Pancadas fortes",
-            95: "⛈️ Trovoada",
-            96: "⛈️ Trovoada com granizo",
-            99: "⛈️ Trovoada com granizo forte"
+            0: "☀️ Céu limpo", 1: "🌤️ Principalmente limpo", 2: "⛅ Parcialmente nublado",
+            3: "☁️ Nublado", 45: "🌫️ Neblina", 48: "🌫️ Neblina com geada",
+            51: "🌧️ Garoa leve", 53: "🌧️ Garoa moderada", 55: "🌧️ Garoa densa",
+            61: "🌧️ Chuva leve", 63: "🌧️ Chuva moderada", 65: "🌧️ Chuva forte",
+            71: "❄️ Neve leve", 73: "❄️ Neve moderada", 75: "❄️ Neve forte",
+            80: "⛈️ Pancadas de chuva", 81: "⛈️ Pancadas moderadas", 82: "⛈️ Pancadas fortes",
+            95: "⛈️ Trovoada", 96: "⛈️ Trovoada com granizo", 99: "⛈️ Trovoada com granizo forte"
         }
         
         weather_code = current.get('weather_code', 0)
         current_weather = weather_codes.get(weather_code, "❓ Desconhecido")
         
-        # Dicionário para dias da semana
-        dias_semana = {
-            0: "Segunda-feira",
-            1: "Terça-feira", 
-            2: "Quarta-feira",
-            3: "Quinta-feira",
-            4: "Sexta-feira",
-            5: "Sábado",
-            6: "Domingo"
-        }
+        dias_semana = {0: "Segunda-feira", 1: "Terça-feira", 2: "Quarta-feira", 3: "Quinta-feira", 4: "Sexta-feira", 5: "Sábado", 6: "Domingo"}
         
-        # Previsão para hoje e próximos dias
         hoje = data_iso()
         previsao_hoje = {}
         previsao_proximos_dias = []
         
         if 'time' in daily and len(daily['time']) >= 4:
             for i, data in enumerate(daily['time']):
-                # Converte a data para dia da semana
                 data_obj = datetime.strptime(data, '%Y-%m-%d')
                 dia_semana = dias_semana[data_obj.weekday()]
                 
@@ -236,7 +203,7 @@ def obter_previsao_tempo():
                 'wind_speed': current.get('wind_speed_10m', 0)
             },
             'hoje': previsao_hoje,
-            'proximos_dias': previsao_proximos_dias[:3]  # Pega apenas os 3 próximos dias
+            'proximos_dias': previsao_proximos_dias[:3]
         }
         
     except Exception as e:
@@ -248,7 +215,6 @@ def obter_previsao_tempo():
 # ============================================
 
 def analisar_previsao(dados_sensor, previsao):
-    """Analisa os dados do sensor com a previsão da Open-Meteo"""
     if not previsao:
         return "⚠️ Dados de previsão indisponíveis no momento."
     
@@ -264,12 +230,7 @@ def analisar_previsao(dados_sensor, previsao):
     temp_max_hoje = previsao_hoje.get('temp_max', 0)
     temp_min_hoje = previsao_hoje.get('temp_min', 0)
     precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
-    weather_code_hoje = previsao_hoje.get('weather_code', 0)
     wind_speed = previsao_atual.get('wind_speed', 0)
-    
-    # ============================================
-    # ANÁLISE DA TEMPERATURA
-    # ============================================
     
     diferenca_temp = abs(temp_sensor - temp_api)
     
@@ -279,20 +240,12 @@ def analisar_previsao(dados_sensor, previsao):
         else:
             analise_temp = f"✅ Sensor ({temp_sensor:.1f}°C) alinhado com a previsão ({temp_api:.1f}°C)."
     
-    # ============================================
-    # EXPLICAÇÃO DA DIFERENÇA
-    # ============================================
-    
     explicacao_diferenca = ""
     if diferenca_temp > 2:
         if temp_sensor > temp_api:
             explicacao_diferenca = f"(Observação: A diferença entre a PREVISÃO e a Temperatura ATUAL do sensor é que a temperatura ainda poderá diminuir conforme o decorrer do dia, se aproximando da previsão de {temp_api:.1f}°C)"
         else:
             explicacao_diferenca = f"(Observação: A diferença entre a PREVISÃO e a Temperatura ATUAL do sensor é que a temperatura ainda poderá subir conforme o decorrer do dia, se aproximando da previsão de {temp_api:.1f}°C)"
-    
-    # ============================================
-    # ANÁLISE DE TENDÊNCIA
-    # ============================================
     
     tendencia = ""
     if temp_max_hoje > 0 and temp_sensor > 0:
@@ -303,10 +256,6 @@ def analisar_previsao(dados_sensor, previsao):
         elif temp_max_hoje <= temp_sensor + 2:
             tendencia = "🌡️ Temperatura estável, sem grandes mudanças previstas."
     
-    # ============================================
-    # ANÁLISE DE CHUVA
-    # ============================================
-    
     chuva = ""
     if precipitacao_hoje > 5:
         chuva = "🌧️ Previsão de CHUVA para hoje. Recomenda-se precaução."
@@ -314,10 +263,6 @@ def analisar_previsao(dados_sensor, previsao):
         chuva = "🌦️ Possibilidade de CHUVA FRACA hoje."
     else:
         chuva = "☀️ Sem previsão de chuva para hoje."
-    
-    # ============================================
-    # ANÁLISE DE UMIDADE
-    # ============================================
     
     umid_analise = ""
     if umid_sensor > 0:
@@ -328,16 +273,11 @@ def analisar_previsao(dados_sensor, previsao):
         else:
             umid_analise = "💧 Umidade confortável."
     
-    # ============================================
-    # PREVISÃO PARA OS PRÓXIMOS 3 DIAS
-    # ============================================
-    
     previsao_dias = ""
     if proximos_dias:
         previsao_dias = "\n━━━━━━━━━━━━━━━━━━━━━━\n📅 Previsão para os próximos 3 dias\n"
         
-        for i, dia in enumerate(proximos_dias[:3]):
-            # Emoji para o clima
+        for dia in proximos_dias[:3]:
             weather_code = dia.get('weather_code', 0)
             if weather_code in [0, 1]:
                 clima_emoji = "☀️"
@@ -360,15 +300,9 @@ def analisar_previsao(dados_sensor, previsao):
             previsao_dias += f"   🌧️ Chuva: {dia.get('precipitacao', 0):.1f} mm\n"
             previsao_dias += f"   {clima_emoji} {dia.get('weather_code', 'N/A')}\n"
         
-        # ============================================
-        # RESUMO DA TENDÊNCIA PARA OS PRÓXIMOS DIAS
-        # ============================================
-        
-        # Analisa a tendência de temperatura
         if len(proximos_dias) >= 2:
             temp_atual = temp_sensor
-            temp_futura = proximos_dias[0].get('temp_max', temp_atual)
-            temp_ultimo = proximos_dias[2].get('temp_max', temp_futura) if len(proximos_dias) >= 3 else temp_futura
+            temp_ultimo = proximos_dias[2].get('temp_max', temp_atual) if len(proximos_dias) >= 3 else proximos_dias[0].get('temp_max', temp_atual)
             
             if temp_ultimo > temp_atual + 3:
                 tendencia_futura = "📈 Previsão de AUMENTO de temperatura nos próximos dias."
@@ -377,25 +311,12 @@ def analisar_previsao(dados_sensor, previsao):
             else:
                 tendencia_futura = "➡️ Previsão de temperatura ESTÁVEL nos próximos dias."
             
-            # Verifica se vai chover nos próximos dias
-            chuva_futura = False
-            for dia in proximos_dias[:3]:
-                if dia.get('precipitacao', 0) > 1:
-                    chuva_futura = True
-                    break
-            
-            if chuva_futura:
-                tendencia_futura += " 🌧️ Possibilidade de chuva nos próximos dias."
-            else:
-                tendencia_futura += " ☀️ Tempo seco e estável nos próximos dias."
+            chuva_futura = any(dia.get('precipitacao', 0) > 1 for dia in proximos_dias[:3])
+            tendencia_futura += " 🌧️ Possibilidade de chuva nos próximos dias." if chuva_futura else " ☀️ Tempo seco e estável nos próximos dias."
             
             previsao_dias += f"\n{tendencia_futura}"
     
-    # ============================================
-    # MONTAGEM DA MENSAGEM COMPLETA
-    # ============================================
-    
-    mensagem = f"""🌤️ PREVISÃO DO TEMPO COMPLETA
+    return f"""🌤️ PREVISÃO DO TEMPO COMPLETA
 ━━━━━━━━━━━━━━━━━━━━━━
 📊 Dados do sensor:
    🌡️ Temperatura: {temp_sensor:.1f}°C
@@ -425,26 +346,20 @@ def analisar_previsao(dados_sensor, previsao):
 ━━━━━━━━━━━━━━━━━━━━━━
 📌 Atualizado: {agora_str()} - {hoje_str()}"""
 
-    return mensagem
-
 # ============================================
-# FUNÇÃO: GERAR ALERTAS METEOROLÓGICOS (COM ANÁLISE COMBINADA)
+# FUNÇÃO: GERAR ALERTAS METEOROLÓGICOS
 # ============================================
 
 def gerar_alertas_meteorologicos():
-    """Gera alertas combinando dados do sensor com previsão Open-Meteo"""
     try:
-        # 1. Busca dados do sensor
         dados_sensor = ler_dados_firebase()
         if not dados_sensor:
             return "⚠️ Dados do sensor indisponíveis."
         
-        # 2. Busca previsão Open-Meteo
         previsao = obter_previsao_tempo()
         if not previsao:
             return "⚠️ Previsão do tempo indisponível no momento."
         
-        # 3. Busca histórico para tendências
         ref = db.reference('/historico')
         historico = ref.get()
         
@@ -455,23 +370,16 @@ def gerar_alertas_meteorologicos():
         previsao_atual = previsao.get('atual', {})
         previsao_hoje = previsao.get('hoje', {})
         
-        temp_api = previsao_atual.get('temp', 0)
-        clima_api = previsao_atual.get('clima', 'Desconhecido')
         temp_max_hoje = previsao_hoje.get('temp_max', 0)
         temp_min_hoje = previsao_hoje.get('temp_min', 0)
         precipitacao_hoje = previsao_hoje.get('precipitacao', 0)
         weather_code_hoje = previsao_hoje.get('weather_code', 0)
         wind_speed = previsao_atual.get('wind_speed', 0)
         
-        # Códigos de clima que indicam chuva
         codigos_chuva = [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99]
         
         alertas = "⚠️ ALERTAS METEOROLÓGICOS\n━━━━━━━━━━━━━━━━━━━━━━\n"
         tem_alerta = False
-        
-        # ============================================
-        # ALERTA 1: TEMPERATURA (Variação em 1h + Previsão)
-        # ============================================
         
         if historico:
             timestamps = sorted(historico.keys())
@@ -485,43 +393,27 @@ def gerar_alertas_meteorologicos():
                     tem_alerta = True
                     alertas += f"🌡️ ALERTA DE TEMPERATURA!\n"
                     
-                    # 🔥 ONDA DE CALOR (Subida + Previsão de calor)
                     if var_temp > 0:
                         alertas += f"   🔥 Subida de {abs(var_temp):.1f}°C em 1h\n"
-                        
-                        # Combinação: sensor subiu + previsão confirma calor
                         if temp_max_hoje > 30 and temp_sensor > 25:
                             alertas += f"   ☀️ PREVISÃO CONFIRMA: Temp máxima de {temp_max_hoje:.1f}°C hoje\n"
                             alertas += f"   ⚠️ ONDA DE CALOR CONFIRMADA! Mantenha-se hidratado.\n"
                         elif temp_max_hoje > temp_sensor + 5:
                             alertas += f"   ⚠️ PREVISÃO INDICA: {temp_sensor:.1f}°C → {temp_max_hoje:.1f}°C\n"
                             alertas += f"   ⚠️ ONDA DE CALOR nas próximas horas!\n"
-                        elif temp_max_hoje > 28:
-                            alertas += f"   ⚠️ Dia quente previsto ({temp_max_hoje:.1f}°C). Fique atento!\n"
                         else:
-                            alertas += f"   ⚠️ Aquecimento significativo, mas previsão indica clima ameno.\n"
-                    
-                    # ❄️ FRENTE FRIA (Queda + Previsão de frio)
+                            alertas += f"   ⚠️ Aquecimento significativo.\n"
                     else:
                         alertas += f"   ❄️ Queda de {abs(var_temp):.1f}°C em 1h\n"
-                        
-                        # Combinação: sensor caiu + previsão confirma frio
                         if temp_min_hoje < 18 and temp_sensor < 20:
                             alertas += f"   ❄️ PREVISÃO CONFIRMA: Temp mínima de {temp_min_hoje:.1f}°C hoje\n"
                             alertas += f"   ⚠️ FRENTE FRIA CONFIRMADA! Agasalhe-se.\n"
                         elif temp_min_hoje < temp_sensor - 3:
                             alertas += f"   ⚠️ PREVISÃO INDICA: {temp_sensor:.1f}°C → {temp_min_hoje:.1f}°C\n"
                             alertas += f"   ⚠️ FRENTE FRIA nas próximas horas!\n"
-                        elif temp_min_hoje < 20:
-                            alertas += f"   ⚠️ Noite fria prevista ({temp_min_hoje:.1f}°C). Prepare-se!\n"
                         else:
-                            alertas += f"   ⚠️ Resfriamento significativo, mas previsão indica clima ameno.\n"
-                    
+                            alertas += f"   ⚠️ Resfriamento significativo.\n"
                     alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
-        
-        # ============================================
-        # ALERTA 2: PRESSÃO (Variação em 1h)
-        # ============================================
         
         if historico:
             timestamps = sorted(historico.keys())
@@ -546,16 +438,11 @@ def gerar_alertas_meteorologicos():
                         alertas += f"   ☀️ Tendência de tempo estável e melhora!\n"
                     alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
-        # ============================================
-        # ALERTA 3: CHUVA (baseado no código do clima E precipitação)
-        # ============================================
-        
         if weather_code_hoje in codigos_chuva or precipitacao_hoje > 5:
             tem_alerta = True
             alertas += f"🌧️ ALERTA DE CHUVA!\n"
             alertas += f"   ☔ Previsão de {precipitacao_hoje:.1f}mm de chuva hoje\n"
             
-            # Identifica o tipo de chuva pelo código
             if weather_code_hoje in [95, 96, 99]:
                 alertas += f"   ⛈️ TROVOADA! Cuidado com raios e ventos fortes.\n"
             elif weather_code_hoje in [80, 81, 82]:
@@ -571,23 +458,14 @@ def gerar_alertas_meteorologicos():
                 alertas += f"   ⚠️ Chuva moderada.\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
-        # ============================================
-        # ALERTA 4: CLIMA EXTREMO (Com base na previsão)
-        # ============================================
-        
-        weather_code = previsao_atual.get('weather_code', 0)
-        if weather_code in [95, 96, 99]:  # Trovoada
+        if weather_code_hoje in [95, 96, 99]:
             tem_alerta = True
             alertas += f"⛈️ ALERTA DE TROVOADA!\n"
             alertas += f"   ⚠️ Possibilidade de raios e ventos fortes!\n"
             alertas += f"   🏠 Permaneça em local seguro.\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
-        # ============================================
-        # ALERTA 5: VENTOS FORTES (Baseado na Open-Meteo)
-        # ============================================
-        
-        if wind_speed > 40:  # > 40 km/h
+        if wind_speed > 40:
             tem_alerta = True
             alertas += f"🌬️ ALERTA DE VENTOS FORTES!\n"
             alertas += f"   💨 Velocidade: {wind_speed:.0f} km/h\n"
@@ -599,16 +477,12 @@ def gerar_alertas_meteorologicos():
                 alertas += f"   ⚠️ Ventos moderados a fortes. Preste atenção.\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
         
-        # ============================================
-        # SE NÃO HOUVER ALERTA
-        # ============================================
-        
         if not tem_alerta:
             alertas += "✅ TEMPO ESTÁVEL!\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
             alertas += f"🌡️ {temp_sensor:.1f}°C | 💧 {umid_sensor:.0f}%\n"
             alertas += f"📊 {pressao_sensor:.0f} hPa\n"
-            alertas += f"☁️ {clima_api}\n"
+            alertas += f"☁️ {previsao_atual.get('clima', 'Desconhecido')}\n"
             if wind_speed > 20:
                 alertas += f"💨 Vento: {wind_speed:.0f} km/h\n"
             alertas += "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -623,71 +497,63 @@ def gerar_alertas_meteorologicos():
         return f"❌ Erro ao gerar alertas: {e}"
 
 # ============================================
-# 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS 
+# 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
 # ============================================
 
 async def verificar_e_enviar_alertas():
-    """Verifica se há alertas meteorológicos e envia automaticamente no grupo"""
+    """Verifica e envia alertas meteorológicos com cooldown correto"""
     global ultimo_alerta_enviado, ultimo_alerta_texto, ultimo_alerta_timestamp
-    
+
     try:
-        # Gera os alertas
         alerta = gerar_alertas_meteorologicos()
-        
-        # Se não houver alerta (tempo estável), não faz nada
+
+        # Se for tempo estável, reseta o controle
         if "✅ TEMPO ESTÁVEL!" in alerta:
-            # Reseta o timestamp do último alerta quando o tempo estabiliza
-            # Isso evita que um alerta antigo seja reenviado depois
             if ultimo_alerta_enviado is not None:
                 print("✅ Tempo estabilizado. Resetando controle de alertas.")
                 ultimo_alerta_enviado = None
                 ultimo_alerta_texto = ""
+                ultimo_alerta_timestamp = 0
             return
-        
-        # 🔧 REGRA 1: Verifica se o alerta é IGUAL ao último enviado
-        if alerta == ultimo_alerta_texto:
-            # É igual! Verifica se já passou 6 horas
-            if ultimo_alerta_timestamp > 0:
-                tempo_decorrido = time.time() - ultimo_alerta_timestamp
-                horas_decorridas = tempo_decorrido / 3600
-                
-                print(f"⏳ Alerta IGUAL ao último. Último enviado há {horas_decorridas:.1f} horas.")
-                
-                # 🔧 REGRA 2: Se passou 6 horas, reenvia (mesmo sendo igual)
-                if tempo_decorrido >= INTERVALO_REENVIO_ALERTA:
-                    print(f"🔄 Passaram 6 horas desde o último alerta igual. Reenviando...")
-                    # Envia o alerta
-                    await bot_application.bot.send_message(
-                        chat_id=CHAT_ID,
-                        text=alerta + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📌 Este alerta já havia sido enviado anteriormente.",
-                        parse_mode="HTML"
-                    )
-                    # Atualiza o timestamp (reset da contagem)
-                    ultimo_alerta_timestamp = time.time()
-                    print(f"🚨 Alerta reenviado (após 6h) às {agora_str()}")
-                    return
-                else:
-                    # Ainda não passou 6 horas, NÃO ENVIA
-                    faltam = INTERVALO_REENVIO_ALERTA - tempo_decorrido
-                    print(f"⏳ Aguardando {faltam/3600:.1f} horas para reenviar.")
-                    return
-        
-        # 🔧 ALERTA NOVO! Envia imediatamente
+
+        # Se não houver dados do sensor, não envia alerta
+        if "⚠️ Dados do sensor indisponíveis" in alerta:
+            print("⚠️ Dados do sensor indisponíveis. Aguardando...")
+            return
+
+        agora = time.time()
+
+        # LÓGICA DE COOLDOWN - ALERTA IGUAL
+        if alerta == ultimo_alerta_texto and ultimo_alerta_timestamp > 0:
+            tempo_decorrido = agora - ultimo_alerta_timestamp
+            if tempo_decorrido < INTERVALO_REENVIO_ALERTA:
+                faltam = INTERVALO_REENVIO_ALERTA - tempo_decorrido
+                print(f"⏳ Alerta IGUAL. Aguardando {faltam/3600:.1f}h para reenviar.")
+                return
+            else:
+                print(f"🔄 Passaram 6 horas. Reenviando alerta igual...")
+
+        # Verifica se o bot_application está pronto antes de enviar
+        if bot_application is None or not hasattr(bot_application, 'bot'):
+            print("⚠️ Bot Application não está pronto. Aguardando...")
+            return
+
+        # ALERTA NOVO OU APÓS 6h - ENVIA
         await bot_application.bot.send_message(
             chat_id=CHAT_ID,
             text=alerta,
             parse_mode="HTML"
         )
-        
-        # Atualiza as variáveis de controle
-        ultimo_alerta_enviado = time.time()
+
+        # Atualiza controle
+        ultimo_alerta_enviado = agora
         ultimo_alerta_texto = alerta
-        ultimo_alerta_timestamp = time.time()
-        print(f"🚨 NOVO alerta meteorológico enviado às {agora_str()}")
-        
+        ultimo_alerta_timestamp = agora
+        print(f"🚨 Alerta enviado às {agora_str()}")
+
     except Exception as e:
-        print(f"❌ Erro ao verificar/enviar alertas: {e}")
-        
+        print(f"❌ Erro ao verificar alertas: {e}")
+
 # ============================================
 # FUNÇÃO: GERAR RELATÓRIO EM TEXTO
 # ============================================
@@ -708,7 +574,6 @@ def gerar_relatorio_tempo_real(dados):
     hora = agora_str()
     data = hoje_str()
     
-    # Busca tendência
     try:
         ref = db.reference('/historico')
         historico = ref.get()
@@ -745,53 +610,22 @@ def gerar_relatorio_tempo_real(dados):
 📈 Tendência: {tendencia}"""
 
 # ============================================
-# FUNÇÃO: GERAR GRÁFICO (USANDO MATPLOTLIB) - CORRIGIDA
+# FUNÇÃO: GERAR GRÁFICO
 # ============================================
 
 def gerar_grafico_diario(dados):
-    """Gera gráfico com 4 painéis usando matplotlib - VERSÃO FINAL"""
-    
-    # 🔧 Importa matplotlib de forma segura
     try:
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         import io
         from datetime import datetime as dt
-    except ImportError as e:
-        print(f"❌ Matplotlib não disponível: {e}")
-        return None, "Biblioteca matplotlib não disponível. Instale com: pip install matplotlib"
-
-    # 🔧 Funções auxiliares (fallback se não existirem no escopo global)
-    def _classificar(pm25):
-        if pm25 <= 15: return "BOA"
-        elif pm25 <= 25: return "MODERADA"
-        elif pm25 <= 50: return "RUIM"
-        elif pm25 <= 100: return "MUITO RUIM"
-        else: return "PÉSSIMA"
-    
-    def _emoji(pm25):
-        if pm25 <= 15: return "🟢"
-        elif pm25 <= 25: return "🟡"
-        elif pm25 <= 50: return "🟠"
-        elif pm25 <= 100: return "🔴"
-        else: return "⚫"
-    
-    # Tenta usar funções globais se existirem
-    classificar_ar_func = globals().get('classificar_ar', _classificar)
-    get_emoji_func = globals().get('get_emoji_classificacao', _emoji)
-    hoje_str_func = globals().get('hoje_str', lambda: dt.now().strftime("%d/%m/%Y"))
-    agora_str_func = globals().get('agora_str', lambda: dt.now().strftime("%H:%M"))
-
-    try:
-        # 🔧 VALIDAÇÃO
+        
         if not dados or len(dados) < 2:
-            return None, f"Dados insuficientes: {len(dados) if dados else 0} registros (mínimo 2)."
-
-        # 🔧 LIMITA DADOS
+            return None, f"Dados insuficientes: {len(dados) if dados else 0} registros."
+        
         dados = dados[-100:] if len(dados) > 100 else dados
-
-        # 🔧 PROCESSAMENTO
+        
         indices, horas, pm25, pm10, temp, umid = [], [], [], [], [], []
         
         for idx, d in enumerate(dados):
@@ -807,24 +641,21 @@ def gerar_grafico_diario(dados):
             umid.append(float(d.get('umid') or 0))
             indices.append(idx)
             horas.append(hora)
-
+        
         if len(pm25) < 2:
             return None, f"Dados insuficientes após processamento: {len(pm25)} registros."
-
-        # 🔧 ESTATÍSTICAS
+        
         media_pm25 = sum(pm25) / len(pm25)
         max_pm25 = max(pm25)
         min_pm25 = min(pm25)
         max_idx = pm25.index(max_pm25)
         max_pm25_hora = horas[max_idx] if max_idx < len(horas) else "--:--"
         
-        classificacao = classificar_ar_func(media_pm25)
-        emoji = get_emoji_func(media_pm25)
-
-        # 🔧 GRÁFICO
+        classificacao = classificar_ar(media_pm25)
+        emoji = get_emoji_classificacao(media_pm25)
+        
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
-
-        # PM2.5
+        
         ax1.bar(indices, pm25, color='#1f77b4', alpha=0.7, width=0.6, label='PM2.5')
         ax1.plot(indices, pm25, 'o-', color='darkblue', linewidth=1.5, markersize=3, label='Tendência')
         ax1.axhline(y=media_pm25, color='red', linestyle='--', alpha=0.5, label=f'Média: {media_pm25:.1f}')
@@ -835,8 +666,7 @@ def gerar_grafico_diario(dados):
             step = max(1, len(horas)//10)
             ax1.set_xticks(indices[::step])
             ax1.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-
-        # PM10
+        
         media_pm10 = sum(pm10) / len(pm10) if pm10 else 0
         ax2.bar(indices, pm10, color='#ff7f0e', alpha=0.7, width=0.6, label='PM10')
         ax2.plot(indices, pm10, 's-', color='darkred', linewidth=1.5, markersize=3, label='Tendência')
@@ -848,8 +678,7 @@ def gerar_grafico_diario(dados):
             step = max(1, len(horas)//10)
             ax2.set_xticks(indices[::step])
             ax2.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-
-        # Temperatura
+        
         media_temp = sum(temp) / len(temp) if temp else 0
         ax3.plot(indices, temp, 'o-', color='#2ca02c', linewidth=2, markersize=4, label='Temperatura')
         ax3.fill_between(indices, temp, alpha=0.2, color='#2ca02c')
@@ -861,8 +690,7 @@ def gerar_grafico_diario(dados):
             step = max(1, len(horas)//10)
             ax3.set_xticks(indices[::step])
             ax3.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-
-        # Umidade
+        
         media_umid = sum(umid) / len(umid) if umid else 0
         ax4.plot(indices, umid, 's-', color='#9467bd', linewidth=2, markersize=4, label='Umidade')
         ax4.fill_between(indices, umid, alpha=0.2, color='#9467bd')
@@ -874,21 +702,19 @@ def gerar_grafico_diario(dados):
             step = max(1, len(horas)//10)
             ax4.set_xticks(indices[::step])
             ax4.set_xticklabels(horas[::step], rotation=45, ha='right', fontsize=7)
-
-        data_str = hoje_str_func()
+        
+        data_str = hoje_str()
         fig.suptitle(f'📊 Qualidade do Ar - {data_str} | Classificação: {emoji} {classificacao}', fontsize=14, fontweight='bold')
         plt.tight_layout()
-
-        # 🔧 SALVA
+        
         buf = io.BytesIO()
         plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
         buf.seek(0)
         plt.close(fig)
-
-        # 🔧 RELATÓRIO
+        
         dados_finais = dados[-1] if dados else {}
         relatorio = f"""📈 RELATÓRIO DIÁRIO COMPLETO
-🕐 {agora_str_func()} - {data_str}
+🕐 {agora_str()} - {data_str}
 ━━━━━━━━━━━━━━━━━━━━━━
 📊 Estatísticas do dia:
    Média PM2.5: {media_pm25:.1f} µg/m³
@@ -901,10 +727,10 @@ def gerar_grafico_diario(dados):
    Umidade: {dados_finais.get('umid', 0):.0f}%
    Pressão: {dados_finais.get('pressao', 0):.0f} hPa
    VOC: {dados_finais.get('voc', 0)}"""
-
+        
         print(f"✅ Gráfico gerado com sucesso! {len(pm25)} pontos")
         return buf, relatorio
-
+        
     except Exception as e:
         import traceback
         print(f"❌ Erro ao gerar gráfico: {e}")
@@ -916,7 +742,6 @@ def gerar_grafico_diario(dados):
 # ============================================
 
 def salvar_grafico_firebase(imagem_buffer, relatorio):
-    """Salva o gráfico no Firebase para o botão 'Gráfico Diário'"""
     try:
         imagem_buffer.seek(0)
         imagem_base64 = base64.b64encode(imagem_buffer.getvalue()).decode('utf-8')
@@ -938,7 +763,6 @@ def salvar_grafico_firebase(imagem_buffer, relatorio):
 # ============================================
 
 async def enviar_relatorio_tempo_real():
-    """Envia relatório em tempo real para o grupo"""
     dados = ler_dados_firebase()
     if dados:
         mensagem = gerar_relatorio_tempo_real(dados)
@@ -958,7 +782,6 @@ async def enviar_relatorio_tempo_real():
 # ============================================
 
 async def enviar_relatorio_diario():
-    """Gera gráfico, salva no Firebase e envia relatório no grupo"""
     print(f"📊 Gerando relatório diário às {agora_str()}...")
     
     dados = buscar_historico_dia()
@@ -979,17 +802,14 @@ async def enviar_relatorio_diario():
         )
         return False
     
-    # 1. Salva o gráfico no Firebase
     salvar_grafico_firebase(grafico, relatorio)
     
-    # 2. Envia o relatório em texto no grupo
     await bot_application.bot.send_message(
         chat_id=CHAT_ID,
         text=relatorio + "\n\n📊 Clique em '📈 Gráfico Diário' abaixo para ver o gráfico:",
         parse_mode="HTML"
     )
     
-    # 3. Envia a imagem do gráfico no grupo
     grafico.seek(0)
     await bot_application.bot.send_photo(
         chat_id=CHAT_ID,
@@ -1005,32 +825,29 @@ async def enviar_relatorio_diario():
 # ============================================
 
 async def verificar_horarios():
-    """Verifica se é hora de enviar os relatórios (horário de Brasília)"""
     hora_atual = agora_str()
-    
-    # Usa um dicionário para controlar o último envio
+    print(f"⏰ Verificando horários: atual = {hora_atual}")
+
     if not hasattr(verificar_horarios, "ultimo_envio"):
         verificar_horarios.ultimo_envio = {}
-    
+
     data_hoje = hoje_str()
-    
-    # Relatórios em tempo real (07h, 12h, 15h, 19h)
+
+    # Relatórios periódicos
     for horario in HORARIOS_REPORT:
         if hora_atual == horario and verificar_horarios.ultimo_envio.get(horario) != data_hoje:
-            print(f"⏰ Hora de enviar relatório: {horario} (Brasília)")
+            print(f"✅ Disparando relatório de {horario}")
             await enviar_relatorio_tempo_real()
             verificar_horarios.ultimo_envio[horario] = data_hoje
-            await asyncio.sleep(30)
             return True
-    
-    # Relatório diário com gráfico (20h)
+
+    # Relatório diário com gráfico
     if hora_atual == HORA_GRAFICO and verificar_horarios.ultimo_envio.get("diario") != data_hoje:
-        print(f"⏰ Hora de enviar relatório diário com gráfico! (Brasília)")
+        print(f"✅ Disparando relatório diário com gráfico ({HORA_GRAFICO})")
         await enviar_relatorio_diario()
         verificar_horarios.ultimo_envio["diario"] = data_hoje
-        await asyncio.sleep(30)
         return True
-    
+
     return False
 
 # ============================================
@@ -1038,7 +855,6 @@ async def verificar_horarios():
 # ============================================
 
 def enviar_grafico_telegram_privado(chat_id):
-    """Busca o gráfico do Firebase e envia para o privado do usuário"""
     print(f"📊 Buscando gráfico no Firebase para {chat_id}...")
     
     try:
@@ -1073,11 +889,9 @@ def enviar_grafico_telegram_privado(chat_id):
 async def enviar_boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global ultima_mensagem_boas_vindas
     
-    # Verifica se é um novo membro entrando no grupo
     if update.message and update.message.new_chat_members:
         chat_id = update.effective_chat.id
         
-        # 🔧 APAGA A MENSAGEM ANTERIOR (se existir)
         if ultima_mensagem_boas_vindas:
             try:
                 await context.bot.delete_message(
@@ -1088,7 +902,6 @@ async def enviar_boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except Exception as e:
                 print(f"⚠️ Erro ao apagar mensagem anterior: {e}")
         
-        # Envia a nova mensagem de boas-vindas
         keyboard = [
             [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
             [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
@@ -1097,7 +910,6 @@ async def enviar_boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Nome do novo membro
         for member in update.message.new_chat_members:
             nome = member.first_name or "Novo membro"
             
@@ -1111,11 +923,9 @@ async def enviar_boas_vindas(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 reply_markup=reply_markup
             )
             
-            # 🔧 GUARDA O ID DA NOVA MENSAGEM
             ultima_mensagem_boas_vindas = mensagem.message_id
             print(f"📌 Nova mensagem de boas-vindas guardada (ID: {ultima_mensagem_boas_vindas})")
             
-            # Fixa a mensagem no topo do grupo
             try:
                 await context.bot.pin_chat_message(
                     chat_id=chat_id,
@@ -1188,19 +998,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensagem = "⚠️ Comando não reconhecido!"
     
     try:
-        # Envia a resposta no privado
         await context.bot.send_message(
             chat_id=user_id,
             text=mensagem
         )
         
-        # 🔧 Envia a confirmação no grupo e agenda para apagar
         msg_confirmacao = await context.bot.send_message(
             chat_id=query.message.chat.id,
             text=f"✅ {user_name}, a resposta foi enviada no seu privado! 📩"
         )
         
-        # 🔧 Agenda a exclusão da mensagem após 15 segundos
         await asyncio.sleep(15)
         await context.bot.delete_message(
             chat_id=query.message.chat.id,
@@ -1211,7 +1018,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         print(f"❌ Erro ao enviar privado: {e}")
-        # Fallback: se não conseguir enviar no privado, envia no grupo
         keyboard = [
             [InlineKeyboardButton("📊 Relatório do Ar", callback_data="relatorio")],
             [InlineKeyboardButton("🌤️ Previsão do Tempo", callback_data="previsao")],
@@ -1264,50 +1070,38 @@ async def webhook(request):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 # ============================================
-# LOOP PRINCIPAL (para relatórios programados + alertas)
+# LOOP PRINCIPAL
 # ============================================
 
 async def main_loop():
-    """Loop que verifica os horários programados (horário de Brasília) e alertas"""
-    global bot_application
-    
-    print(f"🕐 Loop iniciado. Horário de Brasília: {agora_str()}")
-    
-    ultima_verificacao_alertas = 0
-    
+    print(f"🕐 Loop principal iniciado às {agora_str()} (Brasília)")
+    ultima_verificacao_alertas = time.time()
+
     while True:
         try:
-            # Aguarda o bot_application ser inicializado
-            if bot_application is None:
-                await asyncio.sleep(5)
-                continue
-            
-            # Verifica horários programados usando o bot_application global
             await verificar_horarios()
-            
-            # 🔥 Verifica alertas meteorológicos a cada 5 minutos
-            if time.time() - ultima_verificacao_alertas >= 300:  # 5 minutos
+
+            if time.time() - ultima_verificacao_alertas >= 300:
                 ultima_verificacao_alertas = time.time()
                 await verificar_e_enviar_alertas()
-            
-            await asyncio.sleep(30)  # Verifica a cada 30 segundos
-            
+
+            await asyncio.sleep(30)
         except Exception as e:
-            print(f"❌ Erro no loop: {e}")
+            print(f"❌ Erro no main_loop: {e}")
             await asyncio.sleep(60)
 
 # ============================================
-# MAIN CORRIGIDO
+# MAIN
 # ============================================
 
 def main():
-    global bot_application, app_initialized
-    
+    global bot_application
+
     print("🚀 Bot do Telegram (Render) iniciado!")
     print(f"🕐 Horário de Brasília: {agora_str()}")
     print("📊 4 botões disponíveis:")
     print("   📊 Relatório do Ar")
-    print("   🌤️ Previsão do Tempo (com Open-Meteo)")
+    print("   🌤️ Previsão do Tempo")
     print("   ⚠️ Alertas Meteorológicos")
     print("   📈 Gráfico Diário")
     print("━━━━━━━━━━━━━━━━━━━━━━")
@@ -1316,97 +1110,31 @@ def main():
     print("   20h - Relatório diário com gráfico")
     print("━━━━━━━━━━━━━━━━━━━━━━")
     print("🔥 Alertas meteorológicos automáticos: ATIVADOS")
-    print("   ⏱️ Verificação a cada 5 minutos")
-    print("   🚨 Envio automático no grupo quando detectado")
-    print("   🌧️ Detecção de chuva por código do clima + precipitação")
-    print("   🌬️ Detecção de ventos fortes")
     print(f"📍 Localização: {LATITUDE}, {LONGITUDE}")
-    
-    # Inicializa a aplicação do bot
+
+    # Inicializa o bot
     bot_application = Application.builder().token(TELEGRAM_TOKEN).build()
     bot_application.add_handler(CommandHandler("start", start))
     bot_application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Adiciona o handler para novos membros
     bot_application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, enviar_boas_vindas))
-    
-    app_initialized = False
-    
-    # ============================================
-    # 🔧 CORREÇÃO: Inicia o loop usando asyncio.create_task
-    # ============================================
-    
-    async def start_background_tasks():
-        """Inicia as tarefas em background"""
-        # Inicia o loop de relatórios
-        asyncio.create_task(main_loop())
-        print("✅ Loop de relatórios iniciado!")
-    
-    # Cria um loop de eventos para executar as tarefas em background
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Inicia as tarefas em background
-    loop.run_until_complete(start_background_tasks())
-    
-    # ============================================
-    # Inicia o servidor
-    # ============================================
-    
-    # Nota: O servidor precisa ser iniciado em uma thread separada
-    # porque o loop de eventos já está rodando
-    
-    def run_server():
-        port = int(os.environ.get("PORT", 8000))
-        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
-        server = uvicorn.Server(config)
-        server.run()
-    
-    # Inicia o servidor em uma thread separada
-    import threading
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
-    print("✅ Servidor iniciado!")
-    
-    # Mantém o loop principal rodando
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        print("🛑 Servidor interrompido!")
-    
-    # ============================================
-    # 🔧 CORREÇÃO: Executar o loop em uma thread separada
-    # ============================================
-    
+
+    # 🔧 CORREÇÃO: Inicia o loop principal em background (thread separada)
     def run_background_loop():
-        """Executa o loop de relatórios em background"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            # Cria um novo loop de eventos para esta thread
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            
-            # Executa o loop principal
-            new_loop.run_until_complete(main_loop())
+            loop.run_until_complete(main_loop())
         except Exception as e:
-            print(f"❌ Erro no loop de background: {e}")
-    
-    # Inicia o loop em uma thread separada (daemon=True para não travar o servidor)
-    import threading
-    thread = threading.Thread(target=run_background_loop, daemon=True)
-    thread.start()
-    print("✅ Loop de relatórios iniciado em background!")
-    
-    # ============================================
-    # Inicia o servidor (NÃO DESLIGA MAIS)
-    # ============================================
-    
+            print(f"❌ Erro no background loop: {e}")
+
+    background_thread = threading.Thread(target=run_background_loop, daemon=True)
+    background_thread.start()
+    print("✅ Loop principal iniciado em background!")
+
+    # Inicia o servidor Uvicorn (bloqueante)
     port = int(os.environ.get("PORT", 8000))
-    
-    # 🔧 CORREÇÃO: Executa o servidor em um loop separado
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
-    
-    # 🔧 CORREÇÃO: Inicia o servidor de forma síncrona (não desliga)
     server.run()
 
 if __name__ == "__main__":
