@@ -504,17 +504,19 @@ def gerar_alertas_meteorologicos():
 # ============================================
 # 🔥 FUNÇÃO: VERIFICAR E ENVIAR ALERTAS AUTOMÁTICOS
 # ============================================
+
 async def verificar_e_enviar_alertas():
     """Verifica e envia alertas meteorológicos com cooldown correto"""
     global ultimo_alerta_enviado, ultimo_alerta_texto, ultimo_alerta_timestamp
     try:
         alerta = gerar_alertas_meteorologicos()
 
-        # Bloqueia envio se previsão estiver indisponível ou tempo estável
-        if "Previsão do tempo indisponível" in alerta:
-            print("⚠️ Previsão Open-Meteo indisponível. Aguardando próxima verificação...")
+        # NUNCA envia se previsão estiver indisponível
+        if "Previsão do tempo indisponível" in alerta or "indisponível no momento" in alerta:
+            print("⚠️ Previsão Open-Meteo indisponível. Ignorando envio.")
             return
 
+        # NUNCA envia se for tempo estável
         if "✅ TEMPO ESTÁVEL!" in alerta:
             if ultimo_alerta_enviado is not None:
                 print("✅ Tempo estabilizado. Resetando controle de alertas.")
@@ -525,13 +527,14 @@ async def verificar_e_enviar_alertas():
 
         # Se não houver dados do sensor
         if "Dados do sensor indisponíveis" in alerta:
-            print("⚠️ Dados do sensor indisponíveis. Aguardando...")
+            print("⚠️ Dados do sensor indisponíveis. Ignorando envio.")
             return
 
         agora = time.time()
 
-        # LÓGICA DE COOLDOWN - ALERTA IGUAL
+        # === REGRA PRINCIPAL ===
         if alerta == ultimo_alerta_texto and ultimo_alerta_timestamp > 0:
+            # Alerta IGUAL → só envia após 6 horas
             tempo_decorrido = agora - ultimo_alerta_timestamp
             if tempo_decorrido < INTERVALO_REENVIO_ALERTA:
                 faltam = INTERVALO_REENVIO_ALERTA - tempo_decorrido
@@ -539,8 +542,11 @@ async def verificar_e_enviar_alertas():
                 return
             else:
                 print(f"🔄 Passaram 6 horas. Reenviando alerta igual...")
+        else:
+            # Alerta DIFERENTE → envia imediatamente
+            print("🔄 Alerta diferente detectado. Enviando imediatamente.")
 
-        # ALERTA NOVO OU APÓS 6h - ENVIA
+        # Envia o alerta
         await bot_application.bot.send_message(
             chat_id=CHAT_ID,
             text=alerta,
@@ -825,29 +831,29 @@ async def enviar_relatorio_diario():
 # ============================================
 # FUNÇÃO: VERIFICAR HORÁRIOS PROGRAMADOS
 # ============================================
-
 async def verificar_horarios():
     hora_atual = agora_str()
-    print(f"⏰ Verificando horários: atual = {hora_atual}")
+    data_hoje = hoje_str()
+
+    print(f"⏰ Verificando horários: atual = {hora_atual} | Hoje = {data_hoje}")
 
     if not hasattr(verificar_horarios, "ultimo_envio"):
         verificar_horarios.ultimo_envio = {}
 
-    data_hoje = hoje_str()
-
-    # Relatórios periódicos
+    # Relatórios periódicos (07h, 12h, 15h, 19h)
     for horario in HORARIOS_REPORT:
         if hora_atual == horario and verificar_horarios.ultimo_envio.get(horario) != data_hoje:
-            print(f"✅ Disparando relatório de {horario}")
+            print(f"✅ Disparando relatório periódico: {horario}")
             await enviar_relatorio_tempo_real()
             verificar_horarios.ultimo_envio[horario] = data_hoje
             return True
 
-    # Relatório diário com gráfico
+    # Relatório diário com gráfico às 20h
     if hora_atual == HORA_GRAFICO and verificar_horarios.ultimo_envio.get("diario") != data_hoje:
-        print(f"✅ Disparando relatório diário com gráfico ({HORA_GRAFICO})")
-        await enviar_relatorio_diario()
-        verificar_horarios.ultimo_envio["diario"] = data_hoje
+        print(f"✅ Disparando RELATÓRIO DIÁRIO COM GRÁFICO às {hora_atual}!")
+        sucesso = await enviar_relatorio_diario()
+        if sucesso:
+            verificar_horarios.ultimo_envio["diario"] = data_hoje
         return True
 
     return False
